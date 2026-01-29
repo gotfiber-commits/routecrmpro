@@ -1,0 +1,15 @@
+{
+  "name": "routecrmpro",
+  "version": "1.0.0",
+  "description": "RouteCRMPro Distribution Management System",
+  "scripts": {
+    "dev": "netlify dev",
+    "build": "echo 'No build needed for static site'"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.9.0"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.0.0"
+  }
+}
