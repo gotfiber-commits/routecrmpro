@@ -4248,12 +4248,16 @@
             const [showPassword, setShowPassword] = useState(false);
             const [isLoading, setIsLoading] = useState(false);
 
-            const handleSubmit = (e) => {
-                e.preventDefault();
-                handleLoginClick();
+            const doLogin = (user) => {
+                const mappedUser = {
+                    ...user,
+                    lastLogin: new Date().toLocaleString()
+                };
+                setIsLoading(false);
+                onLogin(mappedUser);
             };
 
-            const handleLoginClick = async () => {
+            const handleLoginClick = () => {
                 if (!username || !password) {
                     setError('Please enter username and password');
                     return;
@@ -4262,65 +4266,61 @@
                 setIsLoading(true);
                 setError('');
                 
-                try {
-                    // Try API login first
-                    const response = await fetch(`${apiBase}/api/auth/login`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username, password })
-                    });
-                    
+                // Try API login first
+                fetch(`${apiBase}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                })
+                .then(response => {
                     if (response.ok) {
-                        const user = await response.json();
-                        // Map API response to expected format
-                        const mappedUser = {
-                            ...user,
-                            lastLogin: new Date().toLocaleString()
-                        };
-                        onLogin(mappedUser);
-                        return;
+                        return response.json();
                     }
-                } catch (err) {
+                    throw new Error('API login failed');
+                })
+                .then(user => {
+                    doLogin(user);
+                })
+                .catch(err => {
                     console.log('API login failed, trying local auth:', err);
-                }
-                
-                // Fall back to local authentication (for demo/offline mode)
-                const user = systemUsers.find(u => u.username === username && u.password === password);
-                if (user) {
-                    onLogin(user);
-                } else {
-                    setError('Invalid username or password');
-                }
-                setIsLoading(false);
+                    // Fall back to local authentication
+                    const user = systemUsers.find(u => u.username === username && u.password === password);
+                    if (user) {
+                        doLogin(user);
+                    } else {
+                        setError('Invalid username or password');
+                        setIsLoading(false);
+                    }
+                });
             };
 
-            const quickLogin = async (role) => {
+            const quickLogin = (role) => {
                 const user = systemUsers.find(u => u.role === role);
                 if (user) {
                     setUsername(user.username);
                     setPassword(user.password);
                     setIsLoading(true);
+                    setError('');
                     
-                    try {
-                        // Try API login
-                        const response = await fetch(`${apiBase}/api/auth/login`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ username: user.username, password: user.password })
-                        });
-                        
+                    // Try API login
+                    fetch(`${apiBase}/api/auth/login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: user.username, password: user.password })
+                    })
+                    .then(response => {
                         if (response.ok) {
-                            const apiUser = await response.json();
-                            onLogin({ ...apiUser, lastLogin: new Date().toLocaleString() });
-                            return;
+                            return response.json();
                         }
-                    } catch (err) {
+                        throw new Error('API login failed');
+                    })
+                    .then(apiUser => {
+                        doLogin(apiUser);
+                    })
+                    .catch(err => {
                         console.log('API quick login failed, using local:', err);
-                    }
-                    
-                    // Fall back to local
-                    onLogin(user);
-                    setIsLoading(false);
+                        doLogin(user);
+                    });
                 }
             };
 
