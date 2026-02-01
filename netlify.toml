@@ -11,14 +11,7 @@
   to = "/.netlify/functions/:splat"
   status = 200
 
-# Handle SPA routing for main app
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-  conditions = {Role = ["tenant"]}
-
-# Admin panel redirect
+# Admin panel (super admin)
 [[redirects]]
   from = "/admin"
   to = "/admin.html"
@@ -29,9 +22,18 @@
   to = "/admin.html"
   status = 200
 
-# Environment variables (set these in Netlify dashboard)
-# DATABASE_URL = your Neon connection string
-# JWT_SECRET = your secure secret key
+# Tenant app
+[[redirects]]
+  from = "/app"
+  to = "/app.html"
+  status = 200
+
+[[redirects]]
+  from = "/app/*"
+  to = "/app.html"
+  status = 200
+
+# Root serves landing page (index.html) by default
 
 [dev]
   port = 8888
