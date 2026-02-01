@@ -1,0 +1,1570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RouteCRMPro - Platform Admin</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366F1;
+            --primary-dark: #4F46E5;
+            --secondary: #8B5CF6;
+            --accent: #F59E0B;
+            --success: #10B981;
+            --danger: #EF4444;
+            --warning: #F59E0B;
+            --bg-dark: #0F172A;
+            --bg-card: #1E293B;
+            --bg-hover: #334155;
+            --text-primary: #F8FAFC;
+            --text-secondary: #94A3B8;
+            --text-muted: #64748B;
+            --border: #334155;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .login-box {
+            background: var(--bg-card);
+            padding: 2.5rem;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.3);
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .login-header h1 {
+            font-size: 1.75rem;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .login-header p {
+            color: var(--text-muted);
+            margin-top: 0.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 0.875rem 1rem;
+            background: var(--bg-dark);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .btn {
+            padding: 0.875rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 1rem;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .error-message {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--danger);
+            color: var(--danger);
+            padding: 0.75rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        /* Dashboard Layout */
+        .dashboard {
+            min-height: 100vh;
+            display: flex;
+        }
+
+        .sidebar {
+            width: 260px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sidebar-logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-logo h2 {
+            font-size: 1.1rem;
+            color: var(--text-primary);
+        }
+
+        .sidebar-logo span {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            display: block;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.875rem 1rem;
+            border-radius: 8px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 0.25rem;
+        }
+
+        .nav-item:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .nav-item.active {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+        }
+
+        .sidebar-footer {
+            margin-top: auto;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .main-content {
+            flex: 1;
+            padding: 2rem;
+            overflow-y: auto;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+        }
+
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            padding: 1.5rem;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .stat-card-label {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .stat-card-change {
+            font-size: 0.8rem;
+            margin-top: 0.5rem;
+        }
+
+        .stat-card-change.positive { color: var(--success); }
+        .stat-card-change.negative { color: var(--danger); }
+
+        /* Table */
+        .table-container {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .table-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .search-input {
+            padding: 0.5rem 1rem;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            width: 250px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 1rem 1.5rem;
+            text-align: left;
+        }
+
+        th {
+            background: var(--bg-dark);
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        tr {
+            border-bottom: 1px solid var(--border);
+        }
+
+        tr:hover {
+            background: var(--bg-hover);
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .status-active {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .status-trial {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+        }
+
+        .status-suspended {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+        }
+
+        .plan-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .plan-trial { background: var(--warning); color: #000; }
+        .plan-starter { background: var(--primary); color: white; }
+        .plan-professional { background: var(--secondary); color: white; }
+        .plan-enterprise { background: var(--success); color: white; }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 1rem;
+        }
+
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            width: 100%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-header h3 {
+            font-size: 1.25rem;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 1rem;
+            padding: 1.5rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .form-select {
+            width: 100%;
+            padding: 0.875rem 1rem;
+            background: var(--bg-dark);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            font-family: inherit;
+        }
+
+        .actions-cell {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .action-btn {
+            padding: 0.4rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-1px);
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem;
+            color: var(--text-muted);
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Company Details */
+        .detail-section {
+            background: var(--bg-dark);
+            padding: 1.25rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .detail-section-title {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.75rem;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+
+        .detail-item label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            display: block;
+        }
+
+        .detail-item span {
+            font-weight: 500;
+        }
+
+        .subdomain-link {
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        .subdomain-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // API Base - adjust for your Netlify deployment
+        const API_BASE = '/.netlify/functions';
+
+        // Login Screen Component
+        function LoginScreen({ onLogin }) {
+            const [username, setUsername] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                setLoading(true);
+
+                try {
+                    const response = await fetch(`${API_BASE}/super-auth/login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, password })
+                    });
+
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Login failed');
+                    }
+
+                    localStorage.setItem('superAdminToken', data.token);
+                    localStorage.setItem('superAdmin', JSON.stringify(data.admin));
+                    onLogin(data.admin, data.token);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="login-container">
+                    <div className="login-box">
+                        <div className="login-header">
+                            <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🛡️</div>
+                            <h1>Platform Admin</h1>
+                            <p>RouteCRMPro Management Console</p>
+                        </div>
+
+                        <form onSubmit={handleSubmit}>
+                            {error && <div className="error-message">⚠️ {error}</div>}
+
+                            <div className="form-group">
+                                <label className="form-label">Username</label>
+                                <input
+                                    type="text"
+                                    className="form-input"
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
+                                    placeholder="Enter username"
+                                    required
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Password</label>
+                                <input
+                                    type="password"
+                                    className="form-input"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="Enter password"
+                                    required
+                                />
+                            </div>
+
+                            <button type="submit" className="btn btn-primary" disabled={loading}>
+                                {loading ? '🔄 Signing in...' : '🔐 Sign In'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
+        // Dashboard Component
+        function Dashboard({ admin, token, onLogout }) {
+            const [activeView, setActiveView] = useState('overview');
+            const [stats, setStats] = useState(null);
+            const [companies, setCompanies] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [showCreateModal, setShowCreateModal] = useState(false);
+            const [showDetailModal, setShowDetailModal] = useState(false);
+            const [selectedCompany, setSelectedCompany] = useState(null);
+            const [searchTerm, setSearchTerm] = useState('');
+
+            const authHeaders = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            };
+
+            useEffect(() => {
+                loadData();
+            }, []);
+
+            const loadData = async () => {
+                setLoading(true);
+                try {
+                    const [statsRes, companiesRes] = await Promise.all([
+                        fetch(`${API_BASE}/companies/stats`, { headers: authHeaders }),
+                        fetch(`${API_BASE}/companies`, { headers: authHeaders })
+                    ]);
+
+                    if (statsRes.ok) {
+                        setStats(await statsRes.json());
+                    }
+                    if (companiesRes.ok) {
+                        const data = await companiesRes.json();
+                        setCompanies(data.data || []);
+                    }
+                } catch (err) {
+                    console.error('Failed to load data:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const viewCompanyDetails = async (companyId) => {
+                try {
+                    const res = await fetch(`${API_BASE}/companies/${companyId}`, { headers: authHeaders });
+                    if (res.ok) {
+                        const data = await res.json();
+                        setSelectedCompany(data);
+                        setShowDetailModal(true);
+                    }
+                } catch (err) {
+                    console.error('Failed to load company:', err);
+                }
+            };
+
+            const filteredCompanies = companies.filter(c =>
+                c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                c.subdomain.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+
+            return (
+                <div className="dashboard">
+                    {/* Sidebar */}
+                    <div className="sidebar">
+                        <div className="sidebar-logo">
+                            <div className="sidebar-logo-icon">🛡️</div>
+                            <div>
+                                <h2>RouteCRMPro</h2>
+                                <span>Platform Admin</span>
+                            </div>
+                        </div>
+
+                        <nav>
+                            <div 
+                                className={`nav-item ${activeView === 'overview' ? 'active' : ''}`}
+                                onClick={() => setActiveView('overview')}
+                            >
+                                📊 Overview
+                            </div>
+                            <div 
+                                className={`nav-item ${activeView === 'companies' ? 'active' : ''}`}
+                                onClick={() => setActiveView('companies')}
+                            >
+                                🏢 Companies
+                            </div>
+                            <div 
+                                className={`nav-item ${activeView === 'billing' ? 'active' : ''}`}
+                                onClick={() => setActiveView('billing')}
+                            >
+                                💳 Billing
+                            </div>
+                            <div 
+                                className={`nav-item ${activeView === 'settings' ? 'active' : ''}`}
+                                onClick={() => setActiveView('settings')}
+                            >
+                                ⚙️ Settings
+                            </div>
+                        </nav>
+
+                        <div className="sidebar-footer">
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                                Signed in as
+                            </div>
+                            <div style={{ fontWeight: '600', marginBottom: '1rem' }}>{admin.name}</div>
+                            <button 
+                                className="btn btn-secondary" 
+                                style={{ width: '100%' }}
+                                onClick={onLogout}
+                            >
+                                🚪 Sign Out
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Main Content */}
+                    <div className="main-content">
+                        {loading ? (
+                            <div className="loading">
+                                <div className="spinner"></div>
+                            </div>
+                        ) : (
+                            <>
+                                {activeView === 'overview' && (
+                                    <OverviewView stats={stats} companies={companies} />
+                                )}
+                                {activeView === 'companies' && (
+                                    <CompaniesView 
+                                        companies={filteredCompanies}
+                                        searchTerm={searchTerm}
+                                        setSearchTerm={setSearchTerm}
+                                        onCreateNew={() => setShowCreateModal(true)}
+                                        onViewDetails={viewCompanyDetails}
+                                        onRefresh={loadData}
+                                        token={token}
+                                    />
+                                )}
+                                {activeView === 'billing' && (
+                                    <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-muted)' }}>
+                                        <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>💳</div>
+                                        <h2>Billing Management</h2>
+                                        <p>Coming soon - Stripe integration for subscription management</p>
+                                    </div>
+                                )}
+                                {activeView === 'settings' && (
+                                    <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-muted)' }}>
+                                        <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>⚙️</div>
+                                        <h2>Platform Settings</h2>
+                                        <p>Coming soon - Global configuration options</p>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+
+                    {/* Create Company Modal */}
+                    {showCreateModal && (
+                        <CreateCompanyModal 
+                            token={token}
+                            onClose={() => setShowCreateModal(false)}
+                            onCreated={() => {
+                                setShowCreateModal(false);
+                                loadData();
+                            }}
+                        />
+                    )}
+
+                    {/* Company Detail Modal */}
+                    {showDetailModal && selectedCompany && (
+                        <CompanyDetailModal 
+                            company={selectedCompany}
+                            token={token}
+                            onClose={() => {
+                                setShowDetailModal(false);
+                                setSelectedCompany(null);
+                            }}
+                            onUpdated={loadData}
+                        />
+                    )}
+                </div>
+            );
+        }
+
+        // Overview View
+        function OverviewView({ stats, companies }) {
+            if (!stats) return null;
+
+            return (
+                <>
+                    <div className="page-header">
+                        <h1 className="page-title">Dashboard Overview</h1>
+                    </div>
+
+                    <div className="stats-grid">
+                        <div className="stat-card">
+                            <div className="stat-card-label">Total Companies</div>
+                            <div className="stat-card-value">{stats.total_companies}</div>
+                            <div className="stat-card-change positive">+{stats.new_companies_30d} this month</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-card-label">Active Companies</div>
+                            <div className="stat-card-value">{stats.active_companies}</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-card-label">Total Users</div>
+                            <div className="stat-card-value">{stats.total_users}</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-card-label">Total Customers</div>
+                            <div className="stat-card-value">{stats.total_customers?.toLocaleString()}</div>
+                        </div>
+                    </div>
+
+                    <div className="stats-grid">
+                        <div className="stat-card">
+                            <div className="stat-card-label">Trial</div>
+                            <div className="stat-card-value">{stats.trial_companies}</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-card-label">Starter</div>
+                            <div className="stat-card-value">{stats.starter_companies}</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-card-label">Professional</div>
+                            <div className="stat-card-value">{stats.pro_companies}</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-card-label">Enterprise</div>
+                            <div className="stat-card-value">{stats.enterprise_companies}</div>
+                        </div>
+                    </div>
+
+                    <div className="table-container">
+                        <div className="table-header">
+                            <div className="table-title">Recent Companies</div>
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Company</th>
+                                    <th>Subdomain</th>
+                                    <th>Plan</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {companies.slice(0, 5).map(company => (
+                                    <tr key={company.id}>
+                                        <td>{company.name}</td>
+                                        <td>
+                                            <code>{company.subdomain}</code>
+                                        </td>
+                                        <td>
+                                            <span className={`plan-badge plan-${company.plan}`}>
+                                                {company.plan}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span className={`status-badge status-${company.status}`}>
+                                                {company.status}
+                                            </span>
+                                        </td>
+                                        <td>{new Date(company.created_at).toLocaleDateString()}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </>
+            );
+        }
+
+        // Companies View
+        function CompaniesView({ companies, searchTerm, setSearchTerm, onCreateNew, onViewDetails, onRefresh, token }) {
+            return (
+                <>
+                    <div className="page-header">
+                        <h1 className="page-title">Companies</h1>
+                        <button className="btn btn-primary" onClick={onCreateNew}>
+                            ➕ Create Company
+                        </button>
+                    </div>
+
+                    <div className="table-container">
+                        <div className="table-header">
+                            <div className="table-title">{companies.length} Companies</div>
+                            <input
+                                type="text"
+                                className="search-input"
+                                placeholder="Search companies..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Company</th>
+                                    <th>Subdomain</th>
+                                    <th>Plan</th>
+                                    <th>Users</th>
+                                    <th>Customers</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {companies.map(company => (
+                                    <tr key={company.id}>
+                                        <td>
+                                            <div style={{ fontWeight: '600' }}>{company.name}</div>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{company.email}</div>
+                                        </td>
+                                        <td>
+                                            <a 
+                                                href={`https://${company.subdomain}.routecrmpro.com`}
+                                                target="_blank"
+                                                className="subdomain-link"
+                                            >
+                                                {company.subdomain}
+                                            </a>
+                                        </td>
+                                        <td>
+                                            <span className={`plan-badge plan-${company.plan}`}>
+                                                {company.plan}
+                                            </span>
+                                        </td>
+                                        <td>{company.user_count || 0}</td>
+                                        <td>{company.customer_count || 0}</td>
+                                        <td>
+                                            <span className={`status-badge status-${company.status}`}>
+                                                {company.status}
+                                            </span>
+                                        </td>
+                                        <td className="actions-cell">
+                                            <button 
+                                                className="action-btn btn-secondary"
+                                                onClick={() => onViewDetails(company.id)}
+                                            >
+                                                View
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </>
+            );
+        }
+
+        // Create Company Modal
+        function CreateCompanyModal({ token, onClose, onCreated }) {
+            const [formData, setFormData] = useState({
+                name: '',
+                subdomain: '',
+                email: '',
+                phone: '',
+                plan: 'trial',
+                city: '',
+                state: ''
+            });
+            const [adminData, setAdminData] = useState({
+                username: 'admin',
+                email: '',
+                password: '',
+                name: ''
+            });
+            const [step, setStep] = useState(1);
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [createdCompany, setCreatedCompany] = useState(null);
+
+            const handleChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+                
+                // Auto-generate subdomain from company name
+                if (name === 'name') {
+                    const subdomain = value.toLowerCase()
+                        .replace(/[^a-z0-9]/g, '')
+                        .slice(0, 20);
+                    setFormData(prev => ({ ...prev, subdomain }));
+                }
+            };
+
+            const handleAdminChange = (e) => {
+                const { name, value } = e.target;
+                setAdminData(prev => ({ ...prev, [name]: value }));
+            };
+
+            const createCompany = async () => {
+                setError('');
+                setLoading(true);
+
+                try {
+                    const res = await fetch(`${API_BASE}/companies`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify(formData)
+                    });
+
+                    const data = await res.json();
+
+                    if (!res.ok) {
+                        throw new Error(data.error || 'Failed to create company');
+                    }
+
+                    setCreatedCompany(data);
+                    setAdminData(prev => ({ ...prev, email: formData.email }));
+                    setStep(2);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const createAdmin = async () => {
+                setError('');
+                setLoading(true);
+
+                try {
+                    const res = await fetch(`${API_BASE}/companies/${createdCompany.id}/setup-admin`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify(adminData)
+                    });
+
+                    const data = await res.json();
+
+                    if (!res.ok) {
+                        throw new Error(data.error || 'Failed to create admin');
+                    }
+
+                    setStep(3);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="modal-overlay">
+                    <div className="modal">
+                        <div className="modal-header">
+                            <h3>
+                                {step === 1 && '🏢 Create New Company'}
+                                {step === 2 && '👤 Setup Admin User'}
+                                {step === 3 && '✅ Company Created!'}
+                            </h3>
+                            <button className="modal-close" onClick={onClose}>&times;</button>
+                        </div>
+
+                        <div className="modal-body">
+                            {error && <div className="error-message">⚠️ {error}</div>}
+
+                            {step === 1 && (
+                                <>
+                                    <div className="form-group">
+                                        <label className="form-label">Company Name *</label>
+                                        <input
+                                            type="text"
+                                            name="name"
+                                            className="form-input"
+                                            value={formData.name}
+                                            onChange={handleChange}
+                                            placeholder="Acme Propane Inc."
+                                            required
+                                        />
+                                    </div>
+
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label className="form-label">Subdomain *</label>
+                                            <input
+                                                type="text"
+                                                name="subdomain"
+                                                className="form-input"
+                                                value={formData.subdomain}
+                                                onChange={handleChange}
+                                                placeholder="acmepropane"
+                                                required
+                                            />
+                                            <small style={{ color: 'var(--text-muted)' }}>
+                                                {formData.subdomain}.routecrmpro.com
+                                            </small>
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label">Plan</label>
+                                            <select
+                                                name="plan"
+                                                className="form-select"
+                                                value={formData.plan}
+                                                onChange={handleChange}
+                                            >
+                                                <option value="trial">Trial (30 days)</option>
+                                                <option value="starter">Starter</option>
+                                                <option value="professional">Professional</option>
+                                                <option value="enterprise">Enterprise</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label className="form-label">Email *</label>
+                                            <input
+                                                type="email"
+                                                name="email"
+                                                className="form-input"
+                                                value={formData.email}
+                                                onChange={handleChange}
+                                                placeholder="contact@company.com"
+                                                required
+                                            />
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label">Phone</label>
+                                            <input
+                                                type="tel"
+                                                name="phone"
+                                                className="form-input"
+                                                value={formData.phone}
+                                                onChange={handleChange}
+                                                placeholder="(555) 123-4567"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label className="form-label">City</label>
+                                            <input
+                                                type="text"
+                                                name="city"
+                                                className="form-input"
+                                                value={formData.city}
+                                                onChange={handleChange}
+                                            />
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label">State</label>
+                                            <input
+                                                type="text"
+                                                name="state"
+                                                className="form-input"
+                                                value={formData.state}
+                                                onChange={handleChange}
+                                            />
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {step === 2 && (
+                                <>
+                                    <div style={{ 
+                                        background: 'var(--bg-dark)', 
+                                        padding: '1rem', 
+                                        borderRadius: '8px', 
+                                        marginBottom: '1.5rem' 
+                                    }}>
+                                        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Company Created</div>
+                                        <div style={{ fontWeight: '600' }}>{createdCompany?.name}</div>
+                                        <div style={{ fontSize: '0.9rem', color: 'var(--primary)' }}>
+                                            {createdCompany?.subdomain}.routecrmpro.com
+                                        </div>
+                                    </div>
+
+                                    <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
+                                        Now create the initial admin user for this company.
+                                    </p>
+
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label className="form-label">Username *</label>
+                                            <input
+                                                type="text"
+                                                name="username"
+                                                className="form-input"
+                                                value={adminData.username}
+                                                onChange={handleAdminChange}
+                                                required
+                                            />
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label">Full Name *</label>
+                                            <input
+                                                type="text"
+                                                name="name"
+                                                className="form-input"
+                                                value={adminData.name}
+                                                onChange={handleAdminChange}
+                                                placeholder="John Smith"
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label className="form-label">Email *</label>
+                                            <input
+                                                type="email"
+                                                name="email"
+                                                className="form-input"
+                                                value={adminData.email}
+                                                onChange={handleAdminChange}
+                                                required
+                                            />
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label">Password *</label>
+                                            <input
+                                                type="password"
+                                                name="password"
+                                                className="form-input"
+                                                value={adminData.password}
+                                                onChange={handleAdminChange}
+                                                placeholder="Min 8 characters"
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {step === 3 && (
+                                <div style={{ textAlign: 'center', padding: '2rem' }}>
+                                    <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎉</div>
+                                    <h2 style={{ marginBottom: '1rem' }}>Company Ready!</h2>
+                                    <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>
+                                        The company and admin user have been created successfully.
+                                    </p>
+                                    
+                                    <div style={{ 
+                                        background: 'var(--bg-dark)', 
+                                        padding: '1.5rem', 
+                                        borderRadius: '8px',
+                                        textAlign: 'left'
+                                    }}>
+                                        <div style={{ marginBottom: '1rem' }}>
+                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Login URL</div>
+                                            <a 
+                                                href={`https://${createdCompany?.subdomain}.routecrmpro.com`}
+                                                target="_blank"
+                                                className="subdomain-link"
+                                                style={{ fontSize: '1.1rem' }}
+                                            >
+                                                {createdCompany?.subdomain}.routecrmpro.com
+                                            </a>
+                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                                                (Use ?tenant={createdCompany?.subdomain} for testing)
+                                            </div>
+                                        </div>
+                                        <div className="detail-grid">
+                                            <div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Username</div>
+                                                <div style={{ fontWeight: '600' }}>{adminData.username}</div>
+                                            </div>
+                                            <div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Password</div>
+                                                <div style={{ fontWeight: '600' }}>{adminData.password}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="modal-footer">
+                            {step === 1 && (
+                                <>
+                                    <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+                                    <button 
+                                        className="btn btn-primary" 
+                                        onClick={createCompany}
+                                        disabled={loading || !formData.name || !formData.subdomain || !formData.email}
+                                    >
+                                        {loading ? 'Creating...' : 'Create Company →'}
+                                    </button>
+                                </>
+                            )}
+                            {step === 2 && (
+                                <>
+                                    <button className="btn btn-secondary" onClick={onClose}>Skip for Now</button>
+                                    <button 
+                                        className="btn btn-primary" 
+                                        onClick={createAdmin}
+                                        disabled={loading || !adminData.name || !adminData.email || !adminData.password}
+                                    >
+                                        {loading ? 'Creating...' : 'Create Admin →'}
+                                    </button>
+                                </>
+                            )}
+                            {step === 3 && (
+                                <button className="btn btn-primary" onClick={onCreated}>
+                                    Done
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Company Detail Modal
+        function CompanyDetailModal({ company, token, onClose, onUpdated }) {
+            const [editing, setEditing] = useState(false);
+            const [formData, setFormData] = useState({
+                plan: company.plan,
+                status: company.status,
+                max_users: company.max_users,
+                max_distribution_centers: company.max_distribution_centers,
+                max_trucks: company.max_trucks
+            });
+            const [loading, setLoading] = useState(false);
+
+            const handleSave = async () => {
+                setLoading(true);
+                try {
+                    const res = await fetch(`${API_BASE}/companies/${company.id}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify(formData)
+                    });
+
+                    if (res.ok) {
+                        setEditing(false);
+                        onUpdated();
+                    }
+                } catch (err) {
+                    console.error('Failed to update:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="modal-overlay">
+                    <div className="modal" style={{ maxWidth: '700px' }}>
+                        <div className="modal-header">
+                            <h3>🏢 {company.name}</h3>
+                            <button className="modal-close" onClick={onClose}>&times;</button>
+                        </div>
+
+                        <div className="modal-body">
+                            <div className="detail-section">
+                                <div className="detail-section-title">Company Information</div>
+                                <div className="detail-grid">
+                                    <div className="detail-item">
+                                        <label>Subdomain</label>
+                                        <span>
+                                            <a href={`https://${company.subdomain}.routecrmpro.com`} target="_blank" className="subdomain-link">
+                                                {company.subdomain}.routecrmpro.com
+                                            </a>
+                                        </span>
+                                    </div>
+                                    <div className="detail-item">
+                                        <label>Email</label>
+                                        <span>{company.email}</span>
+                                    </div>
+                                    <div className="detail-item">
+                                        <label>Phone</label>
+                                        <span>{company.phone || '-'}</span>
+                                    </div>
+                                    <div className="detail-item">
+                                        <label>Location</label>
+                                        <span>{company.city && company.state ? `${company.city}, ${company.state}` : '-'}</span>
+                                    </div>
+                                    <div className="detail-item">
+                                        <label>Created</label>
+                                        <span>{new Date(company.created_at).toLocaleDateString()}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="detail-section">
+                                <div className="detail-section-title">Subscription</div>
+                                {editing ? (
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label className="form-label">Plan</label>
+                                            <select
+                                                className="form-select"
+                                                value={formData.plan}
+                                                onChange={(e) => setFormData(prev => ({ ...prev, plan: e.target.value }))}
+                                            >
+                                                <option value="trial">Trial</option>
+                                                <option value="starter">Starter</option>
+                                                <option value="professional">Professional</option>
+                                                <option value="enterprise">Enterprise</option>
+                                            </select>
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label">Status</label>
+                                            <select
+                                                className="form-select"
+                                                value={formData.status}
+                                                onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value }))}
+                                            >
+                                                <option value="active">Active</option>
+                                                <option value="suspended">Suspended</option>
+                                                <option value="cancelled">Cancelled</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="detail-grid">
+                                        <div className="detail-item">
+                                            <label>Plan</label>
+                                            <span className={`plan-badge plan-${company.plan}`}>{company.plan}</span>
+                                        </div>
+                                        <div className="detail-item">
+                                            <label>Status</label>
+                                            <span className={`status-badge status-${company.status}`}>{company.status}</span>
+                                        </div>
+                                        {company.plan_expires_at && (
+                                            <div className="detail-item">
+                                                <label>Expires</label>
+                                                <span>{new Date(company.plan_expires_at).toLocaleDateString()}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="detail-section">
+                                <div className="detail-section-title">Usage & Limits</div>
+                                <div className="detail-grid">
+                                    <div className="detail-item">
+                                        <label>Users</label>
+                                        <span>{company.user_count || 0} / {company.max_users}</span>
+                                    </div>
+                                    <div className="detail-item">
+                                        <label>Distribution Centers</label>
+                                        <span>{company.dc_count || 0} / {company.max_distribution_centers}</span>
+                                    </div>
+                                    <div className="detail-item">
+                                        <label>Trucks</label>
+                                        <span>{company.truck_count || 0} / {company.max_trucks}</span>
+                                    </div>
+                                    <div className="detail-item">
+                                        <label>Customers</label>
+                                        <span>{company.customer_count || 0}</span>
+                                    </div>
+                                    <div className="detail-item">
+                                        <label>Orders</label>
+                                        <span>{company.order_count || 0}</span>
+                                    </div>
+                                    <div className="detail-item">
+                                        <label>Routes</label>
+                                        <span>{company.route_count || 0}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {company.users && company.users.length > 0 && (
+                                <div className="detail-section">
+                                    <div className="detail-section-title">Users ({company.users.length})</div>
+                                    <table style={{ fontSize: '0.9rem' }}>
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Username</th>
+                                                <th>Role</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {company.users.map(user => (
+                                                <tr key={user.id}>
+                                                    <td>{user.name}</td>
+                                                    <td>{user.username}</td>
+                                                    <td style={{ textTransform: 'capitalize' }}>{user.role}</td>
+                                                    <td>
+                                                        <span className={`status-badge status-${user.status}`}>
+                                                            {user.status}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="modal-footer">
+                            {editing ? (
+                                <>
+                                    <button className="btn btn-secondary" onClick={() => setEditing(false)}>Cancel</button>
+                                    <button className="btn btn-primary" onClick={handleSave} disabled={loading}>
+                                        {loading ? 'Saving...' : 'Save Changes'}
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <button className="btn btn-secondary" onClick={onClose}>Close</button>
+                                    <button className="btn btn-primary" onClick={() => setEditing(true)}>
+                                        ✏️ Edit
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Main App
+        function App() {
+            const [admin, setAdmin] = useState(null);
+            const [token, setToken] = useState(null);
+
+            useEffect(() => {
+                // Check for existing session
+                const savedToken = localStorage.getItem('superAdminToken');
+                const savedAdmin = localStorage.getItem('superAdmin');
+                if (savedToken && savedAdmin) {
+                    setToken(savedToken);
+                    setAdmin(JSON.parse(savedAdmin));
+                }
+            }, []);
+
+            const handleLogin = (adminData, tokenData) => {
+                setAdmin(adminData);
+                setToken(tokenData);
+            };
+
+            const handleLogout = () => {
+                localStorage.removeItem('superAdminToken');
+                localStorage.removeItem('superAdmin');
+                setAdmin(null);
+                setToken(null);
+            };
+
+            if (!admin || !token) {
+                return <LoginScreen onLogin={handleLogin} />;
+            }
+
+            return <Dashboard admin={admin} token={token} onLogout={handleLogout} />;
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
