@@ -3,10 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RouteCRMPro</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <title>RouteCRMPro - Propane & Fuel Delivery Management</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -15,8 +12,6 @@
             --secondary: #8B5CF6;
             --accent: #F59E0B;
             --success: #10B981;
-            --danger: #EF4444;
-            --warning: #F59E0B;
             --bg-dark: #0F172A;
             --bg-card: #1E293B;
             --bg-hover: #334155;
@@ -26,346 +21,519 @@
             --border: #334155;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Outfit', sans-serif; background: var(--bg-dark); color: var(--text-primary); line-height: 1.6; }
-        .login-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; background: linear-gradient(135deg, var(--bg-dark) 0%, #1a1a2e 100%); }
-        .login-box { background: var(--bg-card); padding: 2.5rem; border-radius: 16px; width: 100%; max-width: 420px; box-shadow: 0 25px 50px rgba(0,0,0,0.3); }
-        .login-header { text-align: center; margin-bottom: 2rem; }
-        .login-header h1 { font-size: 2rem; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .company-badge { display: inline-block; background: var(--bg-hover); padding: 0.5rem 1rem; border-radius: 20px; margin-top: 0.75rem; font-size: 0.9rem; color: var(--text-secondary); }
-        .form-group { margin-bottom: 1.25rem; }
-        .form-label { display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-weight: 500; }
-        .form-input, .form-select { width: 100%; padding: 0.875rem 1rem; background: var(--bg-dark); border: 2px solid var(--border); border-radius: 8px; color: var(--text-primary); font-size: 1rem; font-family: inherit; transition: border-color 0.2s; }
-        .form-input:focus { outline: none; border-color: var(--primary); }
-        .btn { padding: 0.875rem 1.5rem; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-family: inherit; font-size: 1rem; transition: all 0.2s; }
-        .btn-primary { background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); color: white; width: 100%; }
-        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4); }
-        .btn-secondary { background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border); }
-        .btn-sm { padding: 0.5rem 1rem; font-size: 0.875rem; }
-        .error-message { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); color: var(--danger); padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; }
-        .dashboard { display: flex; min-height: 100vh; }
-        .sidebar { width: 260px; background: var(--bg-card); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; height: 100vh; overflow-y: auto; }
-        .sidebar-header { padding: 1.5rem; border-bottom: 1px solid var(--border); }
-        .sidebar-logo { display: flex; align-items: center; gap: 0.75rem; }
-        .sidebar-logo-icon { width: 40px; height: 40px; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; }
-        .sidebar-logo h2 { font-size: 1.1rem; }
-        .company-name { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; }
-        .sidebar-nav { padding: 1rem; flex: 1; }
-        .nav-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.875rem 1rem; border-radius: 8px; color: var(--text-secondary); cursor: pointer; transition: all 0.2s; margin-bottom: 0.25rem; }
-        .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
-        .nav-item.active { background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); color: white; }
-        .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--border); }
-        .user-info { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
-        .user-avatar { width: 40px; height: 40px; background: var(--bg-hover); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; }
-        .user-name { font-weight: 600; font-size: 0.9rem; }
-        .user-role { font-size: 0.75rem; color: var(--text-muted); text-transform: capitalize; }
-        .main-content { flex: 1; margin-left: 260px; padding: 2rem; overflow-y: auto; }
-        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
-        .page-title { font-size: 1.75rem; font-weight: 700; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-        .stat-card { background: var(--bg-card); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border); }
-        .stat-card-icon { font-size: 2rem; margin-bottom: 0.5rem; }
-        .stat-card-value { font-size: 2rem; font-weight: 700; }
-        .stat-card-label { color: var(--text-muted); font-size: 0.875rem; }
-        .table-container { background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 2rem; }
-        .table-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); }
-        .table-title { font-size: 1.1rem; font-weight: 600; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 1rem 1.5rem; text-align: left; }
-        th { background: var(--bg-dark); color: var(--text-muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
-        tr { border-bottom: 1px solid var(--border); }
-        tr:hover { background: var(--bg-hover); }
-        .status-badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
-        .status-active, .status-delivered { background: rgba(16, 185, 129, 0.1); color: var(--success); }
-        .status-pending { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
-        .status-scheduled, .status-in_progress { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
-        .status-inactive, .status-cancelled { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
-        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
-        .modal { background: var(--bg-card); border-radius: 16px; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1.5rem; border-bottom: 1px solid var(--border); }
-        .modal-close { background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; }
-        .modal-body { padding: 1.5rem; }
-        .modal-footer { display: flex; justify-content: flex-end; gap: 1rem; padding: 1.5rem; border-top: 1px solid var(--border); }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        .loading { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4rem; color: var(--text-muted); }
-        .spinner { width: 50px; height: 50px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 1rem; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; }
-        @media (max-width: 1024px) {
-            .grid-2 { grid-template-columns: 1fr; }
-            .sidebar { width: 70px; }
-            .sidebar-header, .sidebar-footer { padding: 1rem 0.5rem; }
-            .sidebar-logo h2, .company-name, .nav-item span, .user-info > div { display: none; }
-            .nav-item { justify-content: center; padding: 1rem; }
-            .main-content { margin-left: 70px; }
+        body { 
+            font-family: 'Outfit', sans-serif; 
+            background: var(--bg-dark); 
+            color: var(--text-primary); 
+            line-height: 1.6; 
+        }
+        
+        /* Navigation */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 5%;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+        .logo-icon {
+            width: 45px;
+            height: 45px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+        }
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover { color: var(--text-primary); }
+        
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 1rem;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+        }
+        .btn-primary:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4); 
+        }
+        .btn-secondary {
+            background: transparent;
+            color: var(--text-primary);
+            border: 2px solid var(--border);
+        }
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+        }
+        .btn-large {
+            padding: 1rem 2rem;
+            font-size: 1.1rem;
+        }
+        
+        /* Hero Section */
+        .hero {
+            text-align: center;
+            padding: 6rem 5% 8rem;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .hero-badge {
+            display: inline-block;
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid var(--primary);
+            color: var(--primary);
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-bottom: 2rem;
+        }
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .hero p {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto 2.5rem;
+        }
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        /* Features */
+        .features {
+            padding: 6rem 5%;
+            background: var(--bg-card);
+        }
+        .features-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .section-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+        .section-title h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+        .section-title p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+        .feature-card {
+            background: var(--bg-dark);
+            padding: 2rem;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .feature-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--primary);
+        }
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        .feature-card h3 {
+            font-size: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+        .feature-card p {
+            color: var(--text-secondary);
+        }
+        
+        /* Pricing */
+        .pricing {
+            padding: 6rem 5%;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+        }
+        .price-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 2.5rem;
+            text-align: center;
+            position: relative;
+        }
+        .price-card.featured {
+            border-color: var(--primary);
+            transform: scale(1.05);
+        }
+        .price-card.featured::before {
+            content: 'Most Popular';
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--primary);
+            color: white;
+            padding: 0.25rem 1rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .price-card h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .price-card .price {
+            font-size: 3rem;
+            font-weight: 800;
+            margin: 1.5rem 0;
+        }
+        .price-card .price span {
+            font-size: 1rem;
+            font-weight: 400;
+            color: var(--text-muted);
+        }
+        .price-card ul {
+            list-style: none;
+            text-align: left;
+            margin: 2rem 0;
+        }
+        .price-card li {
+            padding: 0.5rem 0;
+            color: var(--text-secondary);
+        }
+        .price-card li::before {
+            content: '✓';
+            color: var(--success);
+            margin-right: 0.75rem;
+            font-weight: bold;
+        }
+        
+        /* Login Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 1rem;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            width: 100%;
+            max-width: 450px;
+            padding: 2.5rem;
+            position: relative;
+        }
+        .modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+        .modal h2 {
+            margin-bottom: 0.5rem;
+        }
+        .modal p {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+        }
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        .form-input {
+            width: 100%;
+            padding: 0.875rem 1rem;
+            background: var(--bg-dark);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            font-family: inherit;
+        }
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        .input-suffix {
+            display: flex;
+            align-items: center;
+        }
+        .input-suffix input {
+            border-radius: 8px 0 0 8px;
+        }
+        .input-suffix span {
+            background: var(--bg-hover);
+            border: 2px solid var(--border);
+            border-left: none;
+            padding: 0.875rem 1rem;
+            border-radius: 0 8px 8px 0;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+        
+        /* Footer */
+        footer {
+            background: var(--bg-card);
+            padding: 3rem 5%;
+            text-align: center;
+            border-top: 1px solid var(--border);
+        }
+        footer p {
+            color: var(--text-muted);
+        }
+        footer a {
+            color: var(--text-secondary);
+            text-decoration: none;
+        }
+        footer a:hover {
+            color: var(--primary);
+        }
+        
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2.5rem; }
+            .nav-links { display: none; }
+            .price-card.featured { transform: scale(1); }
         }
     </style>
 </head>
 <body>
-    <div id="root"></div>
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-        const API_BASE = '/.netlify/functions';
+    <!-- Navigation -->
+    <nav>
+        <div class="logo">
+            <div class="logo-icon">🚛</div>
+            <span>RouteCRMPro</span>
+        </div>
+        <div class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#pricing">Pricing</a>
+            <a href="#" onclick="openLogin()">Customer Login</a>
+            <a href="/admin" class="btn btn-secondary">Admin Portal</a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-badge">🚀 Now serving propane distributors nationwide</div>
+        <h1>Streamline Your Propane Delivery Operations</h1>
+        <p>Route optimization, customer management, GPS tracking, and billing - all in one powerful platform built for fuel distribution companies.</p>
+        <div class="hero-buttons">
+            <a href="#" onclick="openLogin()" class="btn btn-primary btn-large">Access Your Account</a>
+            <a href="#pricing" class="btn btn-secondary btn-large">View Pricing</a>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features" id="features">
+        <div class="features-container">
+            <div class="section-title">
+                <h2>Everything You Need to Run Your Operation</h2>
+                <p>Purpose-built tools for propane and fuel delivery companies</p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🗺️</div>
+                    <h3>Smart Route Optimization</h3>
+                    <p>Reduce mileage and fuel costs with intelligent route planning. Our algorithm finds the most efficient delivery sequence.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">👥</div>
+                    <h3>Customer Management</h3>
+                    <p>Track tank sizes, delivery history, pricing tiers, and automate scheduling based on usage patterns.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📍</div>
+                    <h3>Real-Time GPS Tracking</h3>
+                    <p>Know where every truck is. Monitor deliveries in progress and keep customers informed.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📦</div>
+                    <h3>Order Management</h3>
+                    <p>From order entry to delivery confirmation. Handle will-calls, scheduled deliveries, and automatic refills.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🚚</div>
+                    <h3>Fleet Management</h3>
+                    <p>Track truck capacity, maintenance schedules, and driver assignments all in one place.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">💰</div>
+                    <h3>Billing & Payments</h3>
+                    <p>Generate invoices, track payments, manage customer balances, and integrate with your accounting.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing -->
+    <section class="pricing" id="pricing">
+        <div class="section-title">
+            <h2>Simple, Transparent Pricing</h2>
+            <p>Choose the plan that fits your operation</p>
+        </div>
+        <div class="pricing-grid">
+            <div class="price-card">
+                <h3>Starter</h3>
+                <p style="color: var(--text-muted);">For small operations</p>
+                <div class="price">$49<span>/month</span></div>
+                <ul>
+                    <li>Up to 10 users</li>
+                    <li>2 distribution centers</li>
+                    <li>15 trucks</li>
+                    <li>200 customers</li>
+                    <li>Email support</li>
+                </ul>
+                <a href="#" onclick="openLogin()" class="btn btn-secondary" style="width: 100%;">Get Started</a>
+            </div>
+            <div class="price-card featured">
+                <h3>Professional</h3>
+                <p style="color: var(--text-muted);">For growing companies</p>
+                <div class="price">$149<span>/month</span></div>
+                <ul>
+                    <li>Up to 50 users</li>
+                    <li>10 distribution centers</li>
+                    <li>50 trucks</li>
+                    <li>1,000 customers</li>
+                    <li>Priority support</li>
+                    <li>API access</li>
+                </ul>
+                <a href="#" onclick="openLogin()" class="btn btn-primary" style="width: 100%;">Get Started</a>
+            </div>
+            <div class="price-card">
+                <h3>Enterprise</h3>
+                <p style="color: var(--text-muted);">For large distributors</p>
+                <div class="price">Custom</div>
+                <ul>
+                    <li>Unlimited users</li>
+                    <li>Unlimited locations</li>
+                    <li>Unlimited trucks</li>
+                    <li>Dedicated support</li>
+                    <li>Custom integrations</li>
+                    <li>On-premise option</li>
+                </ul>
+                <a href="mailto:sales@routecrmpro.com" class="btn btn-secondary" style="width: 100%;">Contact Sales</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <p>© 2024 RouteCRMPro. All rights reserved. | <a href="/admin">Admin Portal</a></p>
+    </footer>
+
+    <!-- Login Modal -->
+    <div class="modal-overlay" id="loginModal">
+        <div class="modal">
+            <button class="modal-close" onclick="closeLogin()">&times;</button>
+            <h2>🚛 Customer Login</h2>
+            <p>Enter your company identifier to access your portal</p>
+            <form onsubmit="goToPortal(event)">
+                <div class="form-group">
+                    <label class="form-label">Company ID</label>
+                    <div class="input-suffix">
+                        <input type="text" id="companySlug" class="form-input" placeholder="yourcompany" required>
+                        <span>.routecrmpro.com</span>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Continue to Login</button>
+            </form>
+            <p style="margin-top: 1.5rem; font-size: 0.9rem; text-align: center;">
+                Don't have an account? <a href="mailto:sales@routecrmpro.com" style="color: var(--primary);">Contact us</a>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        function openLogin() {
+            document.getElementById('loginModal').classList.add('active');
+        }
         
-        function getTenant() {
-            const params = new URLSearchParams(window.location.search);
-            if (params.get('tenant')) return params.get('tenant');
-            const host = window.location.hostname;
-            const parts = host.split('.');
-            if (parts.length >= 2 && !['www', 'app', 'localhost'].includes(parts[0])) return parts[0];
-            return null;
+        function closeLogin() {
+            document.getElementById('loginModal').classList.remove('active');
         }
-
-        const api = {
-            token: localStorage.getItem('authToken'),
-            tenant: getTenant(),
-            async request(endpoint, options = {}) {
-                const headers = { 'Content-Type': 'application/json', ...(this.token && { 'Authorization': `Bearer ${this.token}` }), ...options.headers };
-                let url = `${API_BASE}${endpoint}`;
-                if (this.tenant && !url.includes('tenant=')) url += (url.includes('?') ? '&' : '?') + `tenant=${this.tenant}`;
-                const response = await fetch(url, { ...options, headers });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Request failed');
-                return data;
-            },
-            setToken(token) { this.token = token; if (token) localStorage.setItem('authToken', token); else localStorage.removeItem('authToken'); }
-        };
-
-        function LoginScreen({ onLogin, tenant }) {
-            const [username, setUsername] = useState('');
-            const [password, setPassword] = useState('');
-            const [error, setError] = useState('');
-            const [loading, setLoading] = useState(false);
-
-            const handleSubmit = async (e) => {
-                e.preventDefault();
-                setError('');
-                setLoading(true);
-                try {
-                    const data = await api.request('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
-                    api.setToken(data.token);
-                    onLogin(data);
-                } catch (err) { setError(err.message); } finally { setLoading(false); }
-            };
-
-            if (!tenant) {
-                return (
-                    <div className="login-container">
-                        <div className="login-box" style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🚛</div>
-                            <h1 style={{ marginBottom: '1rem' }}>RouteCRMPro</h1>
-                            <p style={{ color: 'var(--text-muted)', marginBottom: '2rem' }}>Please access your company portal via your dedicated URL.</p>
-                            <div style={{ background: 'var(--bg-dark)', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                Example: <strong>yourcompany</strong>.routecrmpro.com
-                            </div>
-                        </div>
-                    </div>
-                );
+        
+        function goToPortal(e) {
+            e.preventDefault();
+            const slug = document.getElementById('companySlug').value.toLowerCase().trim();
+            if (slug) {
+                // For now, use query param. Later can switch to subdomain
+                window.location.href = '/app?tenant=' + slug;
             }
-
-            return (
-                <div className="login-container">
-                    <div className="login-box">
-                        <div className="login-header">
-                            <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🚛</div>
-                            <h1>RouteCRMPro</h1>
-                            <div className="company-badge">🏢 {tenant}</div>
-                        </div>
-                        <form onSubmit={handleSubmit}>
-                            {error && <div className="error-message">⚠️ {error}</div>}
-                            <div className="form-group">
-                                <label className="form-label">Username</label>
-                                <input type="text" className="form-input" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Enter username" required autoFocus />
-                            </div>
-                            <div className="form-group">
-                                <label className="form-label">Password</label>
-                                <input type="password" className="form-input" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" required />
-                            </div>
-                            <button type="submit" className="btn btn-primary" disabled={loading}>{loading ? '🔄 Signing in...' : '🔐 Sign In'}</button>
-                        </form>
-                    </div>
-                </div>
-            );
         }
-
-        function Dashboard({ user, company, onLogout }) {
-            const [activeView, setActiveView] = useState('dashboard');
-            const [data, setData] = useState(null);
-            const [loading, setLoading] = useState(true);
-
-            useEffect(() => { loadData(); }, []);
-
-            const loadData = async () => {
-                setLoading(true);
-                try { const result = await api.request('/data'); setData(result); } catch (err) { console.error('Failed to load data:', err); } finally { setLoading(false); }
-            };
-
-            const navItems = [
-                { id: 'dashboard', icon: '📊', label: 'Dashboard' },
-                { id: 'customers', icon: '👥', label: 'Customers' },
-                { id: 'orders', icon: '📦', label: 'Orders' },
-                { id: 'routes', icon: '🗺️', label: 'Routes' },
-                { id: 'trucks', icon: '🚚', label: 'Trucks' },
-                { id: 'drivers', icon: '👷', label: 'Drivers' },
-            ];
-            if (user.role === 'admin') navItems.push({ id: 'dcs', icon: '🏭', label: 'Distribution Centers' }, { id: 'users', icon: '👤', label: 'Users' });
-
-            return (
-                <div className="dashboard">
-                    <div className="sidebar">
-                        <div className="sidebar-header">
-                            <div className="sidebar-logo">
-                                <div className="sidebar-logo-icon">🚛</div>
-                                <div><h2>RouteCRMPro</h2><div className="company-name">{company.name}</div></div>
-                            </div>
-                        </div>
-                        <nav className="sidebar-nav">
-                            {navItems.map(item => (
-                                <div key={item.id} className={`nav-item ${activeView === item.id ? 'active' : ''}`} onClick={() => setActiveView(item.id)}>
-                                    <span style={{ fontSize: '1.25rem' }}>{item.icon}</span>
-                                    <span>{item.label}</span>
-                                </div>
-                            ))}
-                        </nav>
-                        <div className="sidebar-footer">
-                            <div className="user-info">
-                                <div className="user-avatar">{user.avatar || '👤'}</div>
-                                <div><div className="user-name">{user.name}</div><div className="user-role">{user.role}</div></div>
-                            </div>
-                            <button className="btn btn-secondary btn-sm" style={{ width: '100%' }} onClick={onLogout}>🚪 Sign Out</button>
-                        </div>
-                    </div>
-                    <div className="main-content">
-                        {loading ? (
-                            <div className="loading"><div className="spinner"></div><div>Loading data...</div></div>
-                        ) : (
-                            <>
-                                {activeView === 'dashboard' && <DashboardView data={data} />}
-                                {activeView === 'customers' && <ListView title="Customers" icon="👥" items={data?.customers || []} columns={['name', 'city', 'customer_type', 'status']} />}
-                                {activeView === 'orders' && <ListView title="Orders" icon="📦" items={data?.orders || []} columns={['order_number', 'customer_name', 'gallons_requested', 'status']} />}
-                                {activeView === 'routes' && <ListView title="Routes" icon="🗺️" items={data?.routes || []} columns={['route_number', 'scheduled_date', 'driver_name', 'status']} />}
-                                {activeView === 'trucks' && <ListView title="Trucks" icon="🚚" items={data?.trucks || []} columns={['name', 'dc_name', 'capacity_gallons', 'status']} />}
-                                {activeView === 'drivers' && <ListView title="Drivers" icon="👷" items={data?.drivers || []} columns={['name', 'dc_name', 'phone', 'status']} />}
-                                {activeView === 'dcs' && <ListView title="Distribution Centers" icon="🏭" items={data?.distributionCenters || []} columns={['name', 'city', 'capacity_gallons', 'status']} />}
-                                {activeView === 'users' && <UsersView />}
-                            </>
-                        )}
-                    </div>
-                </div>
-            );
-        }
-
-        function DashboardView({ data }) {
-            const stats = [
-                { icon: '👥', value: data?.customers?.length || 0, label: 'Customers' },
-                { icon: '📦', value: data?.orders?.filter(o => o.status === 'pending').length || 0, label: 'Pending Orders' },
-                { icon: '🗺️', value: data?.routes?.filter(r => r.status === 'planned').length || 0, label: 'Planned Routes' },
-                { icon: '🚚', value: data?.trucks?.filter(t => t.status === 'active').length || 0, label: 'Active Trucks' },
-            ];
-            return (
-                <>
-                    <div className="page-header"><h1 className="page-title">Dashboard</h1></div>
-                    <div className="stats-grid">
-                        {stats.map((stat, i) => (
-                            <div key={i} className="stat-card">
-                                <div className="stat-card-icon">{stat.icon}</div>
-                                <div className="stat-card-value">{stat.value}</div>
-                                <div className="stat-card-label">{stat.label}</div>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="grid-2">
-                        <div className="table-container">
-                            <div className="table-header"><div className="table-title">Recent Orders</div></div>
-                            <table>
-                                <thead><tr><th>Order #</th><th>Customer</th><th>Gallons</th><th>Status</th></tr></thead>
-                                <tbody>
-                                    {(data?.orders || []).slice(0, 5).map(order => (
-                                        <tr key={order.id}>
-                                            <td><code>{order.order_number}</code></td>
-                                            <td>{order.customer_name}</td>
-                                            <td>{order.gallons_requested}</td>
-                                            <td><span className={`status-badge status-${order.status}`}>{order.status}</span></td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div className="table-container">
-                            <div className="table-header"><div className="table-title">Distribution Centers</div></div>
-                            <table>
-                                <thead><tr><th>Name</th><th>Location</th><th>Status</th></tr></thead>
-                                <tbody>
-                                    {(data?.distributionCenters || []).map(dc => (
-                                        <tr key={dc.id}>
-                                            <td>{dc.name}</td>
-                                            <td>{dc.city}, {dc.state}</td>
-                                            <td><span className={`status-badge status-${dc.status}`}>{dc.status}</span></td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </>
-            );
-        }
-
-        function ListView({ title, icon, items, columns }) {
-            return (
-                <>
-                    <div className="page-header">
-                        <h1 className="page-title">{icon} {title}</h1>
-                        <button className="btn btn-primary">➕ Add New</button>
-                    </div>
-                    <div className="table-container">
-                        <div className="table-header"><div className="table-title">{items.length} {title}</div></div>
-                        <table>
-                            <thead><tr>{columns.map(col => <th key={col}>{col.replace(/_/g, ' ')}</th>)}</tr></thead>
-                            <tbody>
-                                {items.map((item, i) => (
-                                    <tr key={item.id || i}>
-                                        {columns.map(col => (
-                                            <td key={col}>
-                                                {col === 'status' ? <span className={`status-badge status-${item[col]}`}>{item[col]}</span> : item[col] || '-'}
-                                            </td>
-                                        ))}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </>
-            );
-        }
-
-        function UsersView() {
-            const [users, setUsers] = useState([]);
-            const [loading, setLoading] = useState(true);
-            useEffect(() => { api.request('/data/users').then(setUsers).catch(console.error).finally(() => setLoading(false)); }, []);
-            if (loading) return <div className="loading"><div className="spinner"></div></div>;
-            return <ListView title="Users" icon="👤" items={users} columns={['name', 'username', 'role', 'status']} />;
-        }
-
-        function App() {
-            const [user, setUser] = useState(null);
-            const [company, setCompany] = useState(null);
-            const tenant = getTenant();
-
-            useEffect(() => {
-                const token = localStorage.getItem('authToken');
-                const savedUser = localStorage.getItem('user');
-                const savedCompany = localStorage.getItem('company');
-                if (token && savedUser && savedCompany) { api.setToken(token); setUser(JSON.parse(savedUser)); setCompany(JSON.parse(savedCompany)); }
-            }, []);
-
-            const handleLogin = (data) => { setUser(data.user); setCompany(data.company); localStorage.setItem('user', JSON.stringify(data.user)); localStorage.setItem('company', JSON.stringify(data.company)); };
-            const handleLogout = () => { api.setToken(null); localStorage.removeItem('authToken'); localStorage.removeItem('user'); localStorage.removeItem('company'); setUser(null); setCompany(null); };
-
-            if (!user) return <LoginScreen onLogin={handleLogin} tenant={tenant} />;
-            return <Dashboard user={user} company={company} onLogout={handleLogout} />;
-        }
-
-        ReactDOM.render(<App />, document.getElementById('root'));
+        
+        // Close modal on outside click
+        document.getElementById('loginModal').addEventListener('click', function(e) {
+            if (e.target === this) closeLogin();
+        });
+        
+        // Close modal on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeLogin();
+        });
     </script>
 </body>
 </html>
