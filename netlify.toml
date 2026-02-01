@@ -1,0 +1,39 @@
+[build]
+  functions = "netlify/functions"
+  publish = "public"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Redirect API calls to functions
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# Handle SPA routing for main app
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  conditions = {Role = ["tenant"]}
+
+# Admin panel redirect
+[[redirects]]
+  from = "/admin"
+  to = "/admin.html"
+  status = 200
+
+[[redirects]]
+  from = "/admin/*"
+  to = "/admin.html"
+  status = 200
+
+# Environment variables (set these in Netlify dashboard)
+# DATABASE_URL = your Neon connection string
+# JWT_SECRET = your secure secret key
+
+[dev]
+  port = 8888
+  targetPort = 3000
+  autoLaunch = false
