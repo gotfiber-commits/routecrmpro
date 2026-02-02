@@ -192,6 +192,18 @@
             const [data, setData] = useState(null);
             const [loading, setLoading] = useState(true);
 
+            // Safety check - if user or company is null, don't render
+            if (!user || !company) {
+                return (
+                    <div className="login-container">
+                        <div className="login-box" style={{ textAlign: 'center' }}>
+                            <p>Session expired. Please login again.</p>
+                            <button className="btn btn-primary" onClick={onLogout}>Return to Login</button>
+                        </div>
+                    </div>
+                );
+            }
+
             useEffect(() => { loadData(); }, []);
 
             const loadData = async () => {
@@ -207,7 +219,7 @@
                 { id: 'trucks', icon: '🚚', label: 'Trucks' },
                 { id: 'drivers', icon: '👷', label: 'Drivers' },
             ];
-            if (user.role === 'admin') navItems.push({ id: 'dcs', icon: '🏭', label: 'Distribution Centers' }, { id: 'users', icon: '👤', label: 'Users' });
+            if (user?.role === 'admin') navItems.push({ id: 'dcs', icon: '🏭', label: 'Distribution Centers' }, { id: 'users', icon: '👤', label: 'Users' });
 
             return (
                 <div className="dashboard">
@@ -215,7 +227,7 @@
                         <div className="sidebar-header">
                             <div className="sidebar-logo">
                                 <div className="sidebar-logo-icon">🚛</div>
-                                <div><h2>RouteCRMPro</h2><div className="company-name">{company.name}</div></div>
+                                <div><h2>RouteCRMPro</h2><div className="company-name">{company?.name || 'Company'}</div></div>
                             </div>
                         </div>
                         <nav className="sidebar-nav">
@@ -228,8 +240,8 @@
                         </nav>
                         <div className="sidebar-footer">
                             <div className="user-info">
-                                <div className="user-avatar">{user.avatar || '👤'}</div>
-                                <div><div className="user-name">{user.name}</div><div className="user-role">{user.role}</div></div>
+                                <div className="user-avatar">{user?.avatar || '👤'}</div>
+                                <div><div className="user-name">{user?.name || 'User'}</div><div className="user-role">{user?.role || ''}</div></div>
                             </div>
                             <button className="btn btn-secondary btn-sm" style={{ width: '100%' }} onClick={onLogout}>🚪 Sign Out</button>
                         </div>
@@ -355,13 +367,43 @@
                 const token = localStorage.getItem('authToken');
                 const savedUser = localStorage.getItem('user');
                 const savedCompany = localStorage.getItem('company');
-                if (token && savedUser && savedCompany) { api.setToken(token); setUser(JSON.parse(savedUser)); setCompany(JSON.parse(savedCompany)); }
+                
+                try {
+                    if (token && savedUser && savedCompany) {
+                        const parsedUser = JSON.parse(savedUser);
+                        const parsedCompany = JSON.parse(savedCompany);
+                        
+                        // Validate data has required fields
+                        if (parsedUser && parsedUser.id && parsedUser.name && parsedCompany && parsedCompany.id && parsedCompany.name) {
+                            api.setToken(token);
+                            setUser(parsedUser);
+                            setCompany(parsedCompany);
+                        } else {
+                            // Invalid data, clear everything
+                            localStorage.removeItem('authToken');
+                            localStorage.removeItem('user');
+                            localStorage.removeItem('company');
+                        }
+                    }
+                } catch (err) {
+                    // JSON parse error, clear everything
+                    localStorage.removeItem('authToken');
+                    localStorage.removeItem('user');
+                    localStorage.removeItem('company');
+                }
             }, []);
 
-            const handleLogin = (data) => { setUser(data.user); setCompany(data.company); localStorage.setItem('user', JSON.stringify(data.user)); localStorage.setItem('company', JSON.stringify(data.company)); };
+            const handleLogin = (data) => {
+                if (data && data.user && data.company) {
+                    setUser(data.user);
+                    setCompany(data.company);
+                    localStorage.setItem('user', JSON.stringify(data.user));
+                    localStorage.setItem('company', JSON.stringify(data.company));
+                }
+            };
             const handleLogout = () => { api.setToken(null); localStorage.removeItem('authToken'); localStorage.removeItem('user'); localStorage.removeItem('company'); setUser(null); setCompany(null); };
 
-            if (!user) return <LoginScreen onLogin={handleLogin} tenant={tenant} />;
+            if (!user || !company) return <LoginScreen onLogin={handleLogin} tenant={tenant} />;
             return <Dashboard user={user} company={company} onLogout={handleLogout} />;
         }
 
