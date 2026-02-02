@@ -7,6 +7,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://js.stripe.com/v3/"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -697,31 +698,128 @@
         function AddCardModal({ stripeKey, onClose, onSuccess }) {
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState('');
-            const [cardNumber, setCardNumber] = useState('');
-            const [cardExpiry, setCardExpiry] = useState('');
-            const [cardCvc, setCardCvc] = useState('');
-            const [cardName, setCardName] = useState('');
+            const [cardComplete, setCardComplete] = useState(false);
+            const [stripe, setStripe] = useState(null);
+            const [cardElement, setCardElement] = useState(null);
+            const cardContainerRef = React.useRef(null);
 
-            // For demo/testing without Stripe Elements
+            // Initialize Stripe when modal opens
+            useEffect(() => {
+                if (!stripeKey) {
+                    setError('Stripe is not configured. Please contact support.');
+                    return;
+                }
+
+                try {
+                    const stripeInstance = Stripe(stripeKey);
+                    setStripe(stripeInstance);
+
+                    const elements = stripeInstance.elements({
+                        appearance: {
+                            theme: 'night',
+                            variables: {
+                                colorPrimary: '#6366F1',
+                                colorBackground: '#0F172A',
+                                colorText: '#F8FAFC',
+                                colorDanger: '#EF4444',
+                                fontFamily: 'Outfit, sans-serif',
+                                borderRadius: '8px',
+                            }
+                        }
+                    });
+
+                    const card = elements.create('card', {
+                        style: {
+                            base: {
+                                fontSize: '16px',
+                                color: '#F8FAFC',
+                                '::placeholder': { color: '#64748B' },
+                            },
+                            invalid: {
+                                color: '#EF4444',
+                            }
+                        }
+                    });
+
+                    // Mount card element
+                    setTimeout(() => {
+                        if (cardContainerRef.current) {
+                            card.mount(cardContainerRef.current);
+                            setCardElement(card);
+
+                            card.on('change', (event) => {
+                                setCardComplete(event.complete);
+                                if (event.error) {
+                                    setError(event.error.message);
+                                } else {
+                                    setError('');
+                                }
+                            });
+                        }
+                    }, 100);
+
+                    return () => {
+                        card.destroy();
+                    };
+                } catch (err) {
+                    setError('Failed to load payment form: ' + err.message);
+                }
+            }, [stripeKey]);
+
             const handleSubmit = async (e) => {
                 e.preventDefault();
+                
+                if (!stripe || !cardElement) {
+                    setError('Payment form not ready. Please wait...');
+                    return;
+                }
+
+                if (!cardComplete) {
+                    setError('Please complete the card details');
+                    return;
+                }
+
                 setLoading(true);
                 setError('');
 
                 try {
-                    // First, get setup intent
+                    // 1. Get setup intent from server
                     const setupRes = await api.request('/tenant-billing/setup-intent', { method: 'POST' });
                     
                     if (!setupRes.client_secret) {
                         throw new Error('Failed to initialize payment setup');
                     }
 
-                    // Note: In production, you'd use Stripe.js Elements here
-                    // For now, we'll show instructions
-                    setError('Stripe Elements integration required. Please contact support to complete card setup.');
-                    
+                    // 2. Confirm card setup with Stripe
+                    const { setupIntent, error: stripeError } = await stripe.confirmCardSetup(
+                        setupRes.client_secret,
+                        {
+                            payment_method: {
+                                card: cardElement,
+                            }
+                        }
+                    );
+
+                    if (stripeError) {
+                        throw new Error(stripeError.message);
+                    }
+
+                    if (setupIntent.status === 'succeeded') {
+                        // 3. Save payment method to our server
+                        await api.request('/tenant-billing/save-payment-method', {
+                            method: 'POST',
+                            body: JSON.stringify({ 
+                                payment_method_id: setupIntent.payment_method 
+                            })
+                        });
+
+                        onSuccess();
+                    } else {
+                        throw new Error('Card setup failed. Please try again.');
+                    }
+
                 } catch (err) {
-                    setError(err.message || 'Failed to add card');
+                    setError(err.message || 'Failed to save card');
                 } finally {
                     setLoading(false);
                 }
@@ -741,12 +839,21 @@
                                 Your card will be saved securely for automatic payments. You can remove it at any time.
                             </p>
 
-                            {/* Stripe Elements would be mounted here */}
-                            <div id="card-element" style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '1rem', background: 'var(--bg-dark)' }}>
-                                <p style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                                    Stripe card input will appear here.<br/>
-                                    <small>Requires Stripe.js to be loaded</small>
-                                </p>
+                            {/* Stripe Card Element */}
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontWeight: '500' }}>
+                                    Card Details
+                                </label>
+                                <div 
+                                    ref={cardContainerRef}
+                                    style={{ 
+                                        padding: '1rem', 
+                                        border: '2px solid var(--border)', 
+                                        borderRadius: '8px', 
+                                        background: 'var(--bg-dark)',
+                                        minHeight: '50px'
+                                    }}
+                                />
                             </div>
 
                             <div style={{ background: 'rgba(99,102,241,0.1)', padding: '1rem', borderRadius: '8px', marginBottom: '1rem' }}>
@@ -755,10 +862,14 @@
                                     Your payment info is encrypted and securely processed by Stripe. We never store your full card number.
                                 </p>
                             </div>
+
+                            <div style={{ background: 'var(--bg-dark)', padding: '0.75rem', borderRadius: '6px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                <strong>Test Card:</strong> 4242 4242 4242 4242 | Exp: 12/28 | CVC: 123
+                            </div>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>
+                            <button className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handleSubmit} disabled={loading || !cardComplete}>
                                 {loading ? 'Processing...' : 'Save Card & Enable Auto-Pay'}
                             </button>
                         </div>
