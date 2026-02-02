@@ -753,11 +753,7 @@
                                     </div>
                                 )}
                                 {activeView === 'settings' && (
-                                    <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-muted)' }}>
-                                        <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>⚙️</div>
-                                        <h2>Platform Settings</h2>
-                                        <p>Coming soon - Global configuration options</p>
-                                    </div>
+                                    <SiteSettingsView token={token} />
                                 )}
                             </>
                         )}
@@ -1261,16 +1257,13 @@
                                         <div style={{ marginBottom: '1rem' }}>
                                             <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Login URL</div>
                                             <a 
-                                                href={`https://${createdCompany?.subdomain}.routecrmpro.com`}
+                                                href={`/app?tenant=${createdCompany?.subdomain}`}
                                                 target="_blank"
                                                 className="subdomain-link"
                                                 style={{ fontSize: '1.1rem' }}
                                             >
-                                                {createdCompany?.subdomain}.routecrmpro.com
+                                                routecrmpro.com/app?tenant={createdCompany?.subdomain}
                                             </a>
-                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                                                (Use ?tenant={createdCompany?.subdomain} for testing)
-                                            </div>
                                         </div>
                                         <div className="detail-grid">
                                             <div>
@@ -1527,6 +1520,312 @@
                         </div>
                     </div>
                 </div>
+            );
+        }
+
+        // Site Settings View - Edit landing page content
+        function SiteSettingsView({ token }) {
+            const [settings, setSettings] = useState({ hero: null, pricing: null });
+            const [loading, setLoading] = useState(true);
+            const [saving, setSaving] = useState(false);
+            const [message, setMessage] = useState('');
+
+            useEffect(() => {
+                loadSettings();
+            }, []);
+
+            const loadSettings = async () => {
+                try {
+                    const response = await fetch('/.netlify/functions/settings');
+                    if (response.ok) {
+                        const data = await response.json();
+                        setSettings(data);
+                    }
+                } catch (err) {
+                    console.error('Failed to load settings');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const saveSettings = async (key, value) => {
+                setSaving(true);
+                setMessage('');
+                try {
+                    const response = await fetch(`/.netlify/functions/settings/${key}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ value })
+                    });
+                    if (response.ok) {
+                        setMessage('✅ Saved successfully!');
+                        loadSettings();
+                    } else {
+                        setMessage('❌ Failed to save');
+                    }
+                } catch (err) {
+                    setMessage('❌ Error saving settings');
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            const updateHero = (field, value) => {
+                setSettings(prev => ({
+                    ...prev,
+                    hero: { ...prev.hero, [field]: value }
+                }));
+            };
+
+            const updatePlan = (index, field, value) => {
+                setSettings(prev => {
+                    const plans = [...(prev.pricing?.plans || [])];
+                    plans[index] = { ...plans[index], [field]: value };
+                    return { ...prev, pricing: { ...prev.pricing, plans } };
+                });
+            };
+
+            const updatePlanFeature = (planIndex, featureIndex, value) => {
+                setSettings(prev => {
+                    const plans = [...(prev.pricing?.plans || [])];
+                    const features = [...plans[planIndex].features];
+                    features[featureIndex] = value;
+                    plans[planIndex] = { ...plans[planIndex], features };
+                    return { ...prev, pricing: { ...prev.pricing, plans } };
+                });
+            };
+
+            const addFeature = (planIndex) => {
+                setSettings(prev => {
+                    const plans = [...(prev.pricing?.plans || [])];
+                    plans[planIndex].features.push('New feature');
+                    return { ...prev, pricing: { ...prev.pricing, plans } };
+                });
+            };
+
+            const removeFeature = (planIndex, featureIndex) => {
+                setSettings(prev => {
+                    const plans = [...(prev.pricing?.plans || [])];
+                    plans[planIndex].features.splice(featureIndex, 1);
+                    return { ...prev, pricing: { ...prev.pricing, plans } };
+                });
+            };
+
+            if (loading) {
+                return <div style={{ textAlign: 'center', padding: '4rem' }}>Loading settings...</div>;
+            }
+
+            return (
+                <>
+                    <div className="page-header">
+                        <h1 className="page-title">🎨 Site Settings</h1>
+                        {message && <span style={{ color: message.includes('✅') ? 'var(--success)' : 'var(--danger)' }}>{message}</span>}
+                    </div>
+
+                    {/* Hero Section Settings */}
+                    <div className="card" style={{ marginBottom: '2rem' }}>
+                        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3>🏠 Hero Section</h3>
+                            <button className="btn btn-primary btn-sm" onClick={() => saveSettings('hero', settings.hero)} disabled={saving}>
+                                {saving ? 'Saving...' : 'Save Hero'}
+                            </button>
+                        </div>
+                        <div className="card-body">
+                            <div className="form-group">
+                                <label className="form-label">Badge Text</label>
+                                <input 
+                                    className="form-input" 
+                                    value={settings.hero?.badge || ''} 
+                                    onChange={(e) => updateHero('badge', e.target.value)}
+                                    placeholder="🚀 Now serving propane distributors nationwide"
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">Main Title</label>
+                                <input 
+                                    className="form-input" 
+                                    value={settings.hero?.title || ''} 
+                                    onChange={(e) => updateHero('title', e.target.value)}
+                                    placeholder="Streamline Your Propane Delivery Operations"
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">Subtitle</label>
+                                <textarea 
+                                    className="form-input" 
+                                    rows="3"
+                                    value={settings.hero?.subtitle || ''} 
+                                    onChange={(e) => updateHero('subtitle', e.target.value)}
+                                    placeholder="Route optimization, customer management..."
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Pricing Settings */}
+                    <div className="card">
+                        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3>💰 Pricing Plans</h3>
+                            <button className="btn btn-primary btn-sm" onClick={() => saveSettings('pricing', settings.pricing)} disabled={saving}>
+                                {saving ? 'Saving...' : 'Save Pricing'}
+                            </button>
+                        </div>
+                        <div className="card-body">
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+                                {(settings.pricing?.plans || []).map((plan, planIndex) => (
+                                    <div key={planIndex} style={{ background: 'var(--bg-dark)', padding: '1.5rem', borderRadius: '12px', border: plan.featured ? '2px solid var(--primary)' : '1px solid var(--border)' }}>
+                                        <div className="form-group">
+                                            <label className="form-label">Plan Name</label>
+                                            <input className="form-input" value={plan.name} onChange={(e) => updatePlan(planIndex, 'name', e.target.value)} />
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label">Description</label>
+                                            <input className="form-input" value={plan.description} onChange={(e) => updatePlan(planIndex, 'description', e.target.value)} />
+                                        </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                            <div className="form-group">
+                                                <label className="form-label">Price ($)</label>
+                                                <input className="form-input" type="number" value={plan.price || ''} onChange={(e) => updatePlan(planIndex, 'price', e.target.value ? parseInt(e.target.value) : null)} placeholder="Custom" />
+                                            </div>
+                                            <div className="form-group">
+                                                <label className="form-label">Period</label>
+                                                <select className="form-input" value={plan.period || ''} onChange={(e) => updatePlan(planIndex, 'period', e.target.value || null)}>
+                                                    <option value="">None</option>
+                                                    <option value="month">month</option>
+                                                    <option value="year">year</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <input type="checkbox" checked={plan.featured} onChange={(e) => updatePlan(planIndex, 'featured', e.target.checked)} />
+                                                Featured (Most Popular)
+                                            </label>
+                                        </div>
+                                        <div className="form-group">
+                                            <label className="form-label">Features</label>
+                                            {plan.features.map((feature, featureIndex) => (
+                                                <div key={featureIndex} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                                                    <input className="form-input" value={feature} onChange={(e) => updatePlanFeature(planIndex, featureIndex, e.target.value)} />
+                                                    <button className="btn btn-sm" style={{ background: 'var(--danger)', color: 'white' }} onClick={() => removeFeature(planIndex, featureIndex)}>✕</button>
+                                                </div>
+                                            ))}
+                                            <button className="btn btn-sm btn-secondary" onClick={() => addFeature(planIndex)}>+ Add Feature</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Admin Password Change */}
+                    <div className="card" style={{ marginTop: '2rem' }}>
+                        <div className="card-header">
+                            <h3>🔐 Change Super Admin Password</h3>
+                        </div>
+                        <div className="card-body">
+                            <PasswordChangeForm token={token} />
+                        </div>
+                    </div>
+                </>
+            );
+        }
+
+        // Password Change Form Component
+        function PasswordChangeForm({ token }) {
+            const [currentPassword, setCurrentPassword] = useState('');
+            const [newPassword, setNewPassword] = useState('');
+            const [confirmPassword, setConfirmPassword] = useState('');
+            const [message, setMessage] = useState('');
+            const [saving, setSaving] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setMessage('');
+
+                if (newPassword !== confirmPassword) {
+                    setMessage('❌ New passwords do not match');
+                    return;
+                }
+
+                if (newPassword.length < 8) {
+                    setMessage('❌ Password must be at least 8 characters');
+                    return;
+                }
+
+                setSaving(true);
+                try {
+                    const response = await fetch('/.netlify/functions/super-auth/change-password', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ currentPassword, newPassword })
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        setMessage('✅ Password changed successfully!');
+                        setCurrentPassword('');
+                        setNewPassword('');
+                        setConfirmPassword('');
+                    } else {
+                        setMessage('❌ ' + (data.error || 'Failed to change password'));
+                    }
+                } catch (err) {
+                    setMessage('❌ Error changing password');
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            return (
+                <form onSubmit={handleSubmit} style={{ maxWidth: '400px' }}>
+                    <div className="form-group">
+                        <label className="form-label">Current Password</label>
+                        <input 
+                            type="password" 
+                            className="form-input" 
+                            value={currentPassword}
+                            onChange={(e) => setCurrentPassword(e.target.value)}
+                            required
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">New Password</label>
+                        <input 
+                            type="password" 
+                            className="form-input" 
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            required
+                            minLength="8"
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Confirm New Password</label>
+                        <input 
+                            type="password" 
+                            className="form-input" 
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            required
+                        />
+                    </div>
+                    {message && (
+                        <div style={{ marginBottom: '1rem', color: message.includes('✅') ? 'var(--success)' : 'var(--danger)' }}>
+                            {message}
+                        </div>
+                    )}
+                    <button type="submit" className="btn btn-primary" disabled={saving}>
+                        {saving ? 'Changing...' : 'Change Password'}
+                    </button>
+                </form>
             );
         }
 
