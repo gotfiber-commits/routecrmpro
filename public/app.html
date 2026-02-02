@@ -219,7 +219,7 @@
                 { id: 'trucks', icon: '🚚', label: 'Trucks' },
                 { id: 'drivers', icon: '👷', label: 'Drivers' },
             ];
-            if (user?.role === 'admin') navItems.push({ id: 'dcs', icon: '🏭', label: 'Distribution Centers' }, { id: 'users', icon: '👤', label: 'Users' });
+            if (user?.role === 'admin') navItems.push({ id: 'dcs', icon: '🏭', label: 'Distribution Centers' }, { id: 'users', icon: '👤', label: 'Users' }, { id: 'billing', icon: '💳', label: 'Billing' });
 
             return (
                 <div className="dashboard">
@@ -259,6 +259,7 @@
                                 {activeView === 'drivers' && <ListView title="Drivers" icon="👷" items={data?.drivers || []} columns={['name', 'dc_name', 'phone', 'status']} />}
                                 {activeView === 'dcs' && <ListView title="Distribution Centers" icon="🏭" items={data?.distributionCenters || []} columns={['name', 'city', 'capacity_gallons', 'status']} />}
                                 {activeView === 'users' && <UsersView />}
+                                {activeView === 'billing' && <TenantBillingView />}
                             </>
                         )}
                     </div>
@@ -356,6 +357,414 @@
             useEffect(() => { api.request('/data/users').then(setUsers).catch(console.error).finally(() => setLoading(false)); }, []);
             if (loading) return <div className="loading"><div className="spinner"></div></div>;
             return <ListView title="Users" icon="👤" items={users} columns={['name', 'username', 'role', 'status']} />;
+        }
+
+        function TenantBillingView() {
+            const [billing, setBilling] = useState(null);
+            const [invoices, setInvoices] = useState([]);
+            const [ledger, setLedger] = useState([]);
+            const [paymentMethod, setPaymentMethod] = useState(null);
+            const [stripeConfig, setStripeConfig] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [activeTab, setActiveTab] = useState('overview');
+            const [showAddCard, setShowAddCard] = useState(false);
+            const [processing, setProcessing] = useState(false);
+            const [message, setMessage] = useState('');
+
+            useEffect(() => { loadBilling(); }, []);
+
+            const loadBilling = async () => {
+                setLoading(true);
+                try {
+                    const [overviewRes, invoicesRes, ledgerRes, pmRes, configRes] = await Promise.all([
+                        api.request('/tenant-billing'),
+                        api.request('/tenant-billing/invoices'),
+                        api.request('/tenant-billing/ledger'),
+                        api.request('/tenant-billing/payment-method'),
+                        api.request('/tenant-billing/stripe-config')
+                    ]);
+                    setBilling(overviewRes);
+                    setInvoices(invoicesRes?.invoices || []);
+                    setLedger(ledgerRes?.ledger || []);
+                    setPaymentMethod(pmRes);
+                    setStripeConfig(configRes);
+                } catch (err) {
+                    console.error('Failed to load billing:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const toggleAutoPay = async (enabled) => {
+                try {
+                    await api.request('/tenant-billing/enable-autopay', { method: 'POST', body: JSON.stringify({ enabled }) });
+                    setMessage(enabled ? '✅ Auto-pay enabled!' : 'Auto-pay disabled');
+                    loadBilling();
+                } catch (err) {
+                    setMessage('❌ ' + (err.message || 'Failed to update auto-pay'));
+                }
+            };
+
+            const removeCard = async () => {
+                if (!confirm('Remove this payment method? Auto-pay will be disabled.')) return;
+                try {
+                    await api.request('/tenant-billing/payment-method', { method: 'DELETE' });
+                    setMessage('Payment method removed');
+                    loadBilling();
+                } catch (err) {
+                    setMessage('❌ Failed to remove card');
+                }
+            };
+
+            const payInvoice = async (invoiceId) => {
+                if (!paymentMethod?.has_payment_method) {
+                    setMessage('Please add a payment method first');
+                    setActiveTab('payment');
+                    return;
+                }
+                setProcessing(true);
+                try {
+                    await api.request(`/tenant-billing/pay/${invoiceId}`, { method: 'POST' });
+                    setMessage('✅ Payment successful! Receipt sent to your email.');
+                    loadBilling();
+                } catch (err) {
+                    setMessage('❌ ' + (err.message || 'Payment failed'));
+                }
+                setProcessing(false);
+            };
+
+            const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
+            const formatDate = (date) => date ? new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
+
+            if (loading) return <div className="loading"><div className="spinner"></div><div>Loading billing...</div></div>;
+
+            return (
+                <>
+                    <div className="page-header"><h1 className="page-title">💳 Billing & Invoices</h1></div>
+
+                    {message && (
+                        <div style={{ padding: '1rem', marginBottom: '1rem', borderRadius: '8px', background: message.includes('✅') ? 'rgba(16,185,129,0.1)' : message.includes('❌') ? 'rgba(239,68,68,0.1)' : 'rgba(99,102,241,0.1)', color: message.includes('✅') ? 'var(--success)' : message.includes('❌') ? 'var(--danger)' : 'var(--primary)' }}>
+                            {message}
+                            <button onClick={() => setMessage('')} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer' }}>×</button>
+                        </div>
+                    )}
+
+                    {/* Summary Cards */}
+                    <div className="stats-grid" style={{ marginBottom: '2rem' }}>
+                        <div className="stat-card">
+                            <div className="stat-card-icon">📋</div>
+                            <div className="stat-card-value" style={{ textTransform: 'capitalize' }}>{billing?.company?.plan_name || billing?.company?.plan}</div>
+                            <div className="stat-card-label">Current Plan</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-card-icon">💰</div>
+                            <div className="stat-card-value">{formatCurrency(billing?.company?.monthly_price)}/mo</div>
+                            <div className="stat-card-label">Monthly Rate</div>
+                        </div>
+                        <div className="stat-card" style={{ borderColor: billing?.balance > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                            <div className="stat-card-icon">{billing?.balance > 0 ? '⚠️' : '✅'}</div>
+                            <div className="stat-card-value" style={{ color: billing?.balance > 0 ? 'var(--danger)' : 'var(--success)' }}>{formatCurrency(billing?.balance)}</div>
+                            <div className="stat-card-label">Account Balance</div>
+                        </div>
+                        <div className="stat-card" style={{ borderColor: billing?.auto_pay ? 'var(--success)' : 'var(--warning)' }}>
+                            <div className="stat-card-icon">{billing?.auto_pay ? '🔄' : '⏸️'}</div>
+                            <div className="stat-card-value">{billing?.auto_pay ? 'Active' : 'Off'}</div>
+                            <div className="stat-card-label">Auto-Pay</div>
+                        </div>
+                    </div>
+
+                    {/* Next Due Notice */}
+                    {billing?.next_due && (
+                        <div style={{ background: billing?.auto_pay ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)', border: `1px solid ${billing?.auto_pay ? 'var(--success)' : 'var(--warning)'}`, padding: '1rem 1.5rem', borderRadius: '8px', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                            <div>
+                                <strong>{billing?.auto_pay ? '🔄 Next Auto-Payment:' : '⚠️ Payment Due:'}</strong> {formatCurrency(billing.next_due.total)} on {formatDate(billing.next_due.due_date)}
+                                <span style={{ color: 'var(--text-muted)', marginLeft: '1rem' }}>Invoice #{billing.next_due.invoice_number}</span>
+                            </div>
+                            {!billing?.auto_pay && (
+                                <button className="btn btn-primary btn-sm" onClick={() => payInvoice(billing.next_due.id)} disabled={processing}>
+                                    {processing ? 'Processing...' : 'Pay Now'}
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Tabs */}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', flexWrap: 'wrap' }}>
+                        {['overview', 'invoices', 'payment', 'history'].map(tab => (
+                            <button key={tab} onClick={() => setActiveTab(tab)} style={{ background: activeTab === tab ? 'var(--primary)' : 'transparent', color: activeTab === tab ? 'white' : 'var(--text-secondary)', border: 'none', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', fontWeight: '500' }}>
+                                {tab === 'history' ? '📊 History' : tab === 'payment' ? '💳 Payment Method' : tab === 'invoices' ? '📄 Invoices' : '📋 Overview'}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Overview Tab */}
+                    {activeTab === 'overview' && (
+                        <>
+                            {/* Payment Method Status */}
+                            <div className="card" style={{ marginBottom: '1.5rem' }}>
+                                <div className="card-body" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                                    <div>
+                                        <strong>Payment Method:</strong>{' '}
+                                        {paymentMethod?.has_payment_method ? (
+                                            <span style={{ color: 'var(--success)' }}>
+                                                💳 {paymentMethod.card?.brand?.toUpperCase()} •••• {paymentMethod.card?.last4} (expires {paymentMethod.card?.exp_month}/{paymentMethod.card?.exp_year})
+                                            </span>
+                                        ) : (
+                                            <span style={{ color: 'var(--warning)' }}>No payment method on file</span>
+                                        )}
+                                    </div>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setActiveTab('payment')}>
+                                        {paymentMethod?.has_payment_method ? 'Manage' : 'Add Card'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Recent Invoices */}
+                            <div className="table-container">
+                                <div className="table-header"><div className="table-title">Recent Invoices</div></div>
+                                <table>
+                                    <thead><tr><th>Invoice #</th><th>Period</th><th>Amount</th><th>Due Date</th><th>Status</th><th></th></tr></thead>
+                                    <tbody>
+                                        {(billing?.recent_invoices || []).slice(0, 5).map(inv => (
+                                            <tr key={inv.id}>
+                                                <td><strong>{inv.invoice_number}</strong></td>
+                                                <td>{formatDate(inv.period_start)} - {formatDate(inv.period_end)}</td>
+                                                <td>{formatCurrency(inv.total)}</td>
+                                                <td style={{ color: new Date(inv.due_date) < new Date() && inv.status === 'pending' ? 'var(--danger)' : 'inherit' }}>{formatDate(inv.due_date)}</td>
+                                                <td><span className={`status-badge status-${inv.status}`}>{inv.status}</span></td>
+                                                <td>
+                                                    {inv.status === 'pending' && paymentMethod?.has_payment_method && (
+                                                        <button className="btn btn-primary btn-sm" onClick={() => payInvoice(inv.id)} disabled={processing}>Pay</button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {(!billing?.recent_invoices || billing.recent_invoices.length === 0) && (
+                                            <tr><td colSpan="6" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No invoices yet</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    )}
+
+                    {/* All Invoices Tab */}
+                    {activeTab === 'invoices' && (
+                        <div className="table-container">
+                            <div className="table-header"><div className="table-title">All Invoices</div></div>
+                            <table>
+                                <thead><tr><th>Invoice #</th><th>Period</th><th>Plan</th><th>Amount</th><th>Due Date</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+                                <tbody>
+                                    {invoices.map(inv => (
+                                        <tr key={inv.id}>
+                                            <td><strong>{inv.invoice_number}</strong></td>
+                                            <td>{formatDate(inv.period_start)} - {formatDate(inv.period_end)}</td>
+                                            <td style={{ textTransform: 'capitalize' }}>{inv.plan}</td>
+                                            <td>{formatCurrency(inv.total)}</td>
+                                            <td>{formatDate(inv.due_date)}</td>
+                                            <td>{inv.paid_at ? formatDate(inv.paid_at) : '-'}</td>
+                                            <td><span className={`status-badge status-${inv.status}`}>{inv.status}</span></td>
+                                            <td>
+                                                {inv.status === 'pending' && paymentMethod?.has_payment_method && (
+                                                    <button className="btn btn-primary btn-sm" onClick={() => payInvoice(inv.id)} disabled={processing}>Pay Now</button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {invoices.length === 0 && (
+                                        <tr><td colSpan="8" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No invoices found</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {/* Payment Method Tab */}
+                    {activeTab === 'payment' && (
+                        <div className="card">
+                            <div className="card-header"><h3>💳 Payment Method</h3></div>
+                            <div className="card-body">
+                                {!stripeConfig?.enabled ? (
+                                    <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                                        <p>Online payments are not configured yet.</p>
+                                        <p>Please contact billing@routecrmpro.com to arrange payment.</p>
+                                    </div>
+                                ) : paymentMethod?.has_payment_method ? (
+                                    <>
+                                        {/* Current Card */}
+                                        <div style={{ background: 'var(--bg-dark)', padding: '1.5rem', borderRadius: '12px', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                                            <div>
+                                                <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>
+                                                    {paymentMethod.card?.brand === 'visa' && '💳'}
+                                                    {paymentMethod.card?.brand === 'mastercard' && '💳'}
+                                                    {paymentMethod.card?.brand === 'amex' && '💳'}
+                                                    {' '}{paymentMethod.card?.brand?.toUpperCase() || 'Card'}
+                                                </div>
+                                                <div style={{ fontFamily: 'monospace', fontSize: '1.25rem', letterSpacing: '2px' }}>
+                                                    •••• •••• •••• {paymentMethod.card?.last4}
+                                                </div>
+                                                <div style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                                                    Expires {paymentMethod.card?.exp_month}/{paymentMethod.card?.exp_year}
+                                                </div>
+                                            </div>
+                                            <button className="btn btn-secondary" onClick={removeCard}>Remove Card</button>
+                                        </div>
+
+                                        {/* Auto-Pay Toggle */}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: paymentMethod?.auto_pay ? 'rgba(16,185,129,0.1)' : 'var(--bg-dark)', borderRadius: '8px', border: paymentMethod?.auto_pay ? '1px solid var(--success)' : '1px solid var(--border)' }}>
+                                            <div>
+                                                <strong>🔄 Automatic Payments</strong>
+                                                <p style={{ margin: '0.25rem 0 0', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                                                    {paymentMethod?.auto_pay 
+                                                        ? 'Your card will be charged automatically each billing cycle. You\'ll receive an emailed receipt.'
+                                                        : 'Enable to automatically pay invoices on your billing date.'}
+                                                </p>
+                                            </div>
+                                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={paymentMethod?.auto_pay || false}
+                                                    onChange={(e) => toggleAutoPay(e.target.checked)}
+                                                    style={{ width: '20px', height: '20px', marginRight: '0.5rem' }}
+                                                />
+                                                <span>{paymentMethod?.auto_pay ? 'Enabled' : 'Disabled'}</span>
+                                            </label>
+                                        </div>
+
+                                        <div style={{ marginTop: '1.5rem' }}>
+                                            <button className="btn btn-secondary" onClick={() => setShowAddCard(true)}>
+                                                Update Payment Method
+                                            </button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div style={{ textAlign: 'center', padding: '2rem' }}>
+                                            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>💳</div>
+                                            <h3>No Payment Method</h3>
+                                            <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+                                                Add a credit or debit card to enable automatic payments and pay invoices online.
+                                            </p>
+                                            <button className="btn btn-primary" onClick={() => setShowAddCard(true)}>
+                                                Add Payment Method
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Account History Tab */}
+                    {activeTab === 'history' && (
+                        <div className="table-container">
+                            <div className="table-header"><div className="table-title">Account History</div></div>
+                            <table>
+                                <thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th></tr></thead>
+                                <tbody>
+                                    {ledger.map(entry => (
+                                        <tr key={entry.id}>
+                                            <td>{formatDate(entry.created_at)}</td>
+                                            <td style={{ textTransform: 'capitalize' }}><span className={`status-badge status-${entry.type === 'payment' ? 'paid' : entry.type === 'charge' ? 'pending' : 'active'}`}>{entry.type}</span></td>
+                                            <td>{entry.description}</td>
+                                            <td style={{ color: entry.amount < 0 ? 'var(--success)' : 'var(--danger)', fontWeight: '600' }}>
+                                                {entry.amount < 0 ? '-' : '+'}{formatCurrency(Math.abs(entry.amount))}
+                                            </td>
+                                            <td>{formatCurrency(entry.balance)}</td>
+                                        </tr>
+                                    ))}
+                                    {ledger.length === 0 && (
+                                        <tr><td colSpan="5" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No transaction history</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {/* Add Card Modal */}
+                    {showAddCard && stripeConfig?.enabled && (
+                        <AddCardModal 
+                            stripeKey={stripeConfig.publishableKey}
+                            onClose={() => setShowAddCard(false)}
+                            onSuccess={() => { setShowAddCard(false); loadBilling(); setMessage('✅ Payment method added! Auto-pay is now enabled.'); }}
+                        />
+                    )}
+                </>
+            );
+        }
+
+        // Add Card Modal with Stripe Elements
+        function AddCardModal({ stripeKey, onClose, onSuccess }) {
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [cardNumber, setCardNumber] = useState('');
+            const [cardExpiry, setCardExpiry] = useState('');
+            const [cardCvc, setCardCvc] = useState('');
+            const [cardName, setCardName] = useState('');
+
+            // For demo/testing without Stripe Elements
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                setError('');
+
+                try {
+                    // First, get setup intent
+                    const setupRes = await api.request('/tenant-billing/setup-intent', { method: 'POST' });
+                    
+                    if (!setupRes.client_secret) {
+                        throw new Error('Failed to initialize payment setup');
+                    }
+
+                    // Note: In production, you'd use Stripe.js Elements here
+                    // For now, we'll show instructions
+                    setError('Stripe Elements integration required. Please contact support to complete card setup.');
+                    
+                } catch (err) {
+                    setError(err.message || 'Failed to add card');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+                    <div className="modal" style={{ maxWidth: '450px' }}>
+                        <div className="modal-header">
+                            <h3>💳 Add Payment Method</h3>
+                            <button className="modal-close" onClick={onClose}>&times;</button>
+                        </div>
+                        <div className="modal-body">
+                            {error && <div className="error-message" style={{ marginBottom: '1rem' }}>{error}</div>}
+                            
+                            <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+                                Your card will be saved securely for automatic payments. You can remove it at any time.
+                            </p>
+
+                            {/* Stripe Elements would be mounted here */}
+                            <div id="card-element" style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '1rem', background: 'var(--bg-dark)' }}>
+                                <p style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                                    Stripe card input will appear here.<br/>
+                                    <small>Requires Stripe.js to be loaded</small>
+                                </p>
+                            </div>
+
+                            <div style={{ background: 'rgba(99,102,241,0.1)', padding: '1rem', borderRadius: '8px', marginBottom: '1rem' }}>
+                                <strong>🔒 Secure Payment</strong>
+                                <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                                    Your payment info is encrypted and securely processed by Stripe. We never store your full card number.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>
+                                {loading ? 'Processing...' : 'Save Card & Enable Auto-Pay'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
         }
 
         function App() {
