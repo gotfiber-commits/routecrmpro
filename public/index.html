@@ -21,353 +21,69 @@
             --border: #334155;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: 'Outfit', sans-serif; 
-            background: var(--bg-dark); 
-            color: var(--text-primary); 
-            line-height: 1.6; 
-        }
-        
-        /* Navigation */
-        nav {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 1.5rem 5%;
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
-        .logo-icon {
-            width: 45px;
-            height: 45px;
-            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-        }
-        .nav-links {
-            display: flex;
-            gap: 2rem;
-            align-items: center;
-        }
-        .nav-links a {
-            color: var(--text-secondary);
-            text-decoration: none;
-            font-weight: 500;
-            transition: color 0.2s;
-        }
+        body { font-family: 'Outfit', sans-serif; background: var(--bg-dark); color: var(--text-primary); line-height: 1.6; }
+        nav { display: flex; justify-content: space-between; align-items: center; padding: 1.5rem 5%; max-width: 1400px; margin: 0 auto; }
+        .logo { display: flex; align-items: center; gap: 0.75rem; font-size: 1.5rem; font-weight: 700; }
+        .logo-icon { width: 45px; height: 45px; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
+        .nav-links { display: flex; gap: 2rem; align-items: center; }
+        .nav-links a { color: var(--text-secondary); text-decoration: none; font-weight: 500; transition: color 0.2s; }
         .nav-links a:hover { color: var(--text-primary); }
-        
-        .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            font-family: inherit;
-            font-size: 1rem;
-            text-decoration: none;
-            display: inline-block;
-            transition: all 0.2s;
-        }
-        .btn-primary {
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            color: white;
-        }
-        .btn-primary:hover { 
-            transform: translateY(-2px); 
-            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4); 
-        }
-        .btn-secondary {
-            background: transparent;
-            color: var(--text-primary);
-            border: 2px solid var(--border);
-        }
-        .btn-secondary:hover {
-            background: var(--bg-hover);
-        }
-        .btn-large {
-            padding: 1rem 2rem;
-            font-size: 1.1rem;
-        }
-        
-        /* Hero Section */
-        .hero {
-            text-align: center;
-            padding: 6rem 5% 8rem;
-            max-width: 1000px;
-            margin: 0 auto;
-        }
-        .hero-badge {
-            display: inline-block;
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid var(--primary);
-            color: var(--primary);
-            padding: 0.5rem 1rem;
-            border-radius: 50px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            margin-bottom: 2rem;
-        }
-        .hero h1 {
-            font-size: 3.5rem;
-            font-weight: 800;
-            line-height: 1.1;
-            margin-bottom: 1.5rem;
-            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .hero p {
-            font-size: 1.25rem;
-            color: var(--text-secondary);
-            max-width: 700px;
-            margin: 0 auto 2.5rem;
-        }
-        .hero-buttons {
-            display: flex;
-            gap: 1rem;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-        
-        /* Features */
-        .features {
-            padding: 6rem 5%;
-            background: var(--bg-card);
-        }
-        .features-container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        .section-title {
-            text-align: center;
-            margin-bottom: 4rem;
-        }
-        .section-title h2 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
-        }
-        .section-title p {
-            color: var(--text-secondary);
-            font-size: 1.1rem;
-        }
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
-        }
-        .feature-card {
-            background: var(--bg-dark);
-            padding: 2rem;
-            border-radius: 16px;
-            border: 1px solid var(--border);
-            transition: transform 0.2s, border-color 0.2s;
-        }
-        .feature-card:hover {
-            transform: translateY(-5px);
-            border-color: var(--primary);
-        }
-        .feature-icon {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
-        }
-        .feature-card h3 {
-            font-size: 1.25rem;
-            margin-bottom: 0.75rem;
-        }
-        .feature-card p {
-            color: var(--text-secondary);
-        }
-        
-        /* Pricing */
-        .pricing {
-            padding: 6rem 5%;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        .pricing-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 2rem;
-        }
-        .price-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 2.5rem;
-            text-align: center;
-            position: relative;
-        }
-        .price-card.featured {
-            border-color: var(--primary);
-            transform: scale(1.05);
-        }
-        .price-card.featured::before {
-            content: 'Most Popular';
-            position: absolute;
-            top: -12px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--primary);
-            color: white;
-            padding: 0.25rem 1rem;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-        .price-card h3 {
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-        }
-        .price-card .price {
-            font-size: 3rem;
-            font-weight: 800;
-            margin: 1.5rem 0;
-        }
-        .price-card .price span {
-            font-size: 1rem;
-            font-weight: 400;
-            color: var(--text-muted);
-        }
-        .price-card ul {
-            list-style: none;
-            text-align: left;
-            margin: 2rem 0;
-        }
-        .price-card li {
-            padding: 0.5rem 0;
-            color: var(--text-secondary);
-        }
-        .price-card li::before {
-            content: '✓';
-            color: var(--success);
-            margin-right: 0.75rem;
-            font-weight: bold;
-        }
-        
-        /* Login Modal */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.8);
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            padding: 1rem;
-        }
+        .btn { padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-family: inherit; font-size: 1rem; text-decoration: none; display: inline-block; transition: all 0.2s; }
+        .btn-primary { background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); color: white; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4); }
+        .btn-secondary { background: transparent; color: var(--text-primary); border: 2px solid var(--border); }
+        .btn-secondary:hover { background: var(--bg-hover); }
+        .btn-large { padding: 1rem 2rem; font-size: 1.1rem; }
+        .hero { text-align: center; padding: 6rem 5% 8rem; max-width: 1000px; margin: 0 auto; }
+        .hero-badge { display: inline-block; background: rgba(99, 102, 241, 0.1); border: 1px solid var(--primary); color: var(--primary); padding: 0.5rem 1rem; border-radius: 50px; font-size: 0.9rem; font-weight: 500; margin-bottom: 2rem; }
+        .hero h1 { font-size: 3.5rem; font-weight: 800; line-height: 1.1; margin-bottom: 1.5rem; background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero p { font-size: 1.25rem; color: var(--text-secondary); max-width: 700px; margin: 0 auto 2.5rem; }
+        .hero-buttons { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+        .features { padding: 6rem 5%; background: var(--bg-card); }
+        .features-container { max-width: 1200px; margin: 0 auto; }
+        .section-title { text-align: center; margin-bottom: 4rem; }
+        .section-title h2 { font-size: 2.5rem; font-weight: 700; margin-bottom: 1rem; }
+        .section-title p { color: var(--text-secondary); font-size: 1.1rem; }
+        .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; }
+        .feature-card { background: var(--bg-dark); padding: 2rem; border-radius: 16px; border: 1px solid var(--border); transition: transform 0.2s, border-color 0.2s; }
+        .feature-card:hover { transform: translateY(-5px); border-color: var(--primary); }
+        .feature-icon { font-size: 2.5rem; margin-bottom: 1rem; }
+        .feature-card h3 { font-size: 1.25rem; margin-bottom: 0.75rem; }
+        .feature-card p { color: var(--text-secondary); }
+        .pricing { padding: 6rem 5%; max-width: 1200px; margin: 0 auto; }
+        .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; }
+        .price-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 2.5rem; text-align: center; position: relative; }
+        .price-card.featured { border-color: var(--primary); transform: scale(1.05); }
+        .price-card.featured::before { content: 'Most Popular'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--primary); color: white; padding: 0.25rem 1rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+        .price-card h3 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .price-card .price { font-size: 3rem; font-weight: 800; margin: 1.5rem 0; }
+        .price-card .price span { font-size: 1rem; font-weight: 400; color: var(--text-muted); }
+        .price-card ul { list-style: none; text-align: left; margin: 2rem 0; }
+        .price-card li { padding: 0.5rem 0; color: var(--text-secondary); }
+        .price-card li::before { content: '✓'; color: var(--success); margin-right: 0.75rem; font-weight: bold; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
         .modal-overlay.active { display: flex; }
-        .modal {
-            background: var(--bg-card);
-            border-radius: 16px;
-            width: 100%;
-            max-width: 450px;
-            padding: 2.5rem;
-            position: relative;
-        }
-        .modal-close {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            font-size: 1.5rem;
-            cursor: pointer;
-        }
-        .modal h2 {
-            margin-bottom: 0.5rem;
-        }
-        .modal p {
-            color: var(--text-secondary);
-            margin-bottom: 1.5rem;
-        }
-        .form-group {
-            margin-bottom: 1.25rem;
-        }
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            color: var(--text-secondary);
-            font-weight: 500;
-        }
-        .form-input {
-            width: 100%;
-            padding: 0.875rem 1rem;
-            background: var(--bg-dark);
-            border: 2px solid var(--border);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-size: 1rem;
-            font-family: inherit;
-        }
-        .form-input:focus {
-            outline: none;
-            border-color: var(--primary);
-        }
-        .input-suffix {
-            display: flex;
-            align-items: center;
-        }
-        .input-suffix input {
-            border-radius: 8px 0 0 8px;
-        }
-        .input-suffix span {
-            background: var(--bg-hover);
-            border: 2px solid var(--border);
-            border-left: none;
-            padding: 0.875rem 1rem;
-            border-radius: 0 8px 8px 0;
-            color: var(--text-muted);
-            white-space: nowrap;
-        }
-        
-        /* Footer */
-        footer {
-            background: var(--bg-card);
-            padding: 3rem 5%;
-            text-align: center;
-            border-top: 1px solid var(--border);
-        }
-        footer p {
-            color: var(--text-muted);
-        }
-        footer a {
-            color: var(--text-secondary);
-            text-decoration: none;
-        }
-        footer a:hover {
-            color: var(--primary);
-        }
-        
-        @media (max-width: 768px) {
-            .hero h1 { font-size: 2.5rem; }
-            .nav-links { display: none; }
-            .price-card.featured { transform: scale(1); }
-        }
+        .modal { background: var(--bg-card); border-radius: 16px; width: 100%; max-width: 450px; padding: 2.5rem; position: relative; }
+        .modal-close { position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; }
+        .modal h2 { margin-bottom: 0.5rem; }
+        .modal p { color: var(--text-secondary); margin-bottom: 1.5rem; }
+        .form-group { margin-bottom: 1.25rem; }
+        .form-label { display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-weight: 500; }
+        .form-input { width: 100%; padding: 0.875rem 1rem; background: var(--bg-dark); border: 2px solid var(--border); border-radius: 8px; color: var(--text-primary); font-size: 1rem; font-family: inherit; }
+        .form-input:focus { outline: none; border-color: var(--primary); }
+        .input-suffix { display: flex; align-items: center; }
+        .input-suffix input { border-radius: 8px 0 0 8px; }
+        .input-suffix span { background: var(--bg-hover); border: 2px solid var(--border); border-left: none; padding: 0.875rem 1rem; border-radius: 0 8px 8px 0; color: var(--text-muted); white-space: nowrap; }
+        footer { background: var(--bg-card); padding: 3rem 5%; text-align: center; border-top: 1px solid var(--border); }
+        footer p { color: var(--text-muted); }
+        footer a { color: var(--text-secondary); text-decoration: none; }
+        footer a:hover { color: var(--primary); }
+        @media (max-width: 768px) { .hero h1 { font-size: 2.5rem; } .nav-links { display: none; } .price-card.featured { transform: scale(1); } }
     </style>
 </head>
 <body>
-    <!-- Navigation -->
     <nav>
-        <div class="logo">
-            <div class="logo-icon">🚛</div>
-            <span>RouteCRMPro</span>
-        </div>
+        <div class="logo"><div class="logo-icon">🚛</div><span>RouteCRMPro</span></div>
         <div class="nav-links">
             <a href="#features">Features</a>
             <a href="#pricing">Pricing</a>
@@ -376,18 +92,16 @@
         </div>
     </nav>
 
-    <!-- Hero Section -->
     <section class="hero">
-        <div class="hero-badge">🚀 Now serving propane distributors nationwide</div>
-        <h1>Streamline Your Propane Delivery Operations</h1>
-        <p>Route optimization, customer management, GPS tracking, and billing - all in one powerful platform built for fuel distribution companies.</p>
+        <div class="hero-badge" id="heroBadge">🚀 Now serving propane distributors nationwide</div>
+        <h1 id="heroTitle">Streamline Your Propane Delivery Operations</h1>
+        <p id="heroSubtitle">Route optimization, customer management, GPS tracking, and billing - all in one powerful platform built for fuel distribution companies.</p>
         <div class="hero-buttons">
             <a href="#" onclick="openLogin()" class="btn btn-primary btn-large">Access Your Account</a>
             <a href="#pricing" class="btn btn-secondary btn-large">View Pricing</a>
         </div>
     </section>
 
-    <!-- Features -->
     <section class="features" id="features">
         <div class="features-container">
             <div class="section-title">
@@ -395,97 +109,28 @@
                 <p>Purpose-built tools for propane and fuel delivery companies</p>
             </div>
             <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon">🗺️</div>
-                    <h3>Smart Route Optimization</h3>
-                    <p>Reduce mileage and fuel costs with intelligent route planning. Our algorithm finds the most efficient delivery sequence.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">👥</div>
-                    <h3>Customer Management</h3>
-                    <p>Track tank sizes, delivery history, pricing tiers, and automate scheduling based on usage patterns.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">📍</div>
-                    <h3>Real-Time GPS Tracking</h3>
-                    <p>Know where every truck is. Monitor deliveries in progress and keep customers informed.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">📦</div>
-                    <h3>Order Management</h3>
-                    <p>From order entry to delivery confirmation. Handle will-calls, scheduled deliveries, and automatic refills.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🚚</div>
-                    <h3>Fleet Management</h3>
-                    <p>Track truck capacity, maintenance schedules, and driver assignments all in one place.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">💰</div>
-                    <h3>Billing & Payments</h3>
-                    <p>Generate invoices, track payments, manage customer balances, and integrate with your accounting.</p>
-                </div>
+                <div class="feature-card"><div class="feature-icon">🗺️</div><h3>Smart Route Optimization</h3><p>Reduce mileage and fuel costs with intelligent route planning. Our algorithm finds the most efficient delivery sequence.</p></div>
+                <div class="feature-card"><div class="feature-icon">👥</div><h3>Customer Management</h3><p>Track tank sizes, delivery history, pricing tiers, and automate scheduling based on usage patterns.</p></div>
+                <div class="feature-card"><div class="feature-icon">📍</div><h3>Real-Time GPS Tracking</h3><p>Know where every truck is. Monitor deliveries in progress and keep customers informed.</p></div>
+                <div class="feature-card"><div class="feature-icon">📦</div><h3>Order Management</h3><p>From order entry to delivery confirmation. Handle will-calls, scheduled deliveries, and automatic refills.</p></div>
+                <div class="feature-card"><div class="feature-icon">🚚</div><h3>Fleet Management</h3><p>Track truck capacity, maintenance schedules, and driver assignments all in one place.</p></div>
+                <div class="feature-card"><div class="feature-icon">💰</div><h3>Billing & Payments</h3><p>Generate invoices, track payments, manage customer balances, and integrate with your accounting.</p></div>
             </div>
         </div>
     </section>
 
-    <!-- Pricing -->
     <section class="pricing" id="pricing">
         <div class="section-title">
             <h2>Simple, Transparent Pricing</h2>
             <p>Choose the plan that fits your operation</p>
         </div>
-        <div class="pricing-grid">
-            <div class="price-card">
-                <h3>Starter</h3>
-                <p style="color: var(--text-muted);">For small operations</p>
-                <div class="price">$49<span>/month</span></div>
-                <ul>
-                    <li>Up to 10 users</li>
-                    <li>2 distribution centers</li>
-                    <li>15 trucks</li>
-                    <li>200 customers</li>
-                    <li>Email support</li>
-                </ul>
-                <a href="#" onclick="openLogin()" class="btn btn-secondary" style="width: 100%;">Get Started</a>
-            </div>
-            <div class="price-card featured">
-                <h3>Professional</h3>
-                <p style="color: var(--text-muted);">For growing companies</p>
-                <div class="price">$149<span>/month</span></div>
-                <ul>
-                    <li>Up to 50 users</li>
-                    <li>10 distribution centers</li>
-                    <li>50 trucks</li>
-                    <li>1,000 customers</li>
-                    <li>Priority support</li>
-                    <li>API access</li>
-                </ul>
-                <a href="#" onclick="openLogin()" class="btn btn-primary" style="width: 100%;">Get Started</a>
-            </div>
-            <div class="price-card">
-                <h3>Enterprise</h3>
-                <p style="color: var(--text-muted);">For large distributors</p>
-                <div class="price">Custom</div>
-                <ul>
-                    <li>Unlimited users</li>
-                    <li>Unlimited locations</li>
-                    <li>Unlimited trucks</li>
-                    <li>Dedicated support</li>
-                    <li>Custom integrations</li>
-                    <li>On-premise option</li>
-                </ul>
-                <a href="mailto:sales@routecrmpro.com" class="btn btn-secondary" style="width: 100%;">Contact Sales</a>
-            </div>
-        </div>
+        <div class="pricing-grid" id="pricingGrid"></div>
     </section>
 
-    <!-- Footer -->
     <footer>
         <p>© 2024 RouteCRMPro. All rights reserved. | <a href="/admin">Admin Portal</a></p>
     </footer>
 
-    <!-- Login Modal -->
     <div class="modal-overlay" id="loginModal">
         <div class="modal">
             <button class="modal-close" onclick="closeLogin()">&times;</button>
@@ -501,39 +146,58 @@
                 </div>
                 <button type="submit" class="btn btn-primary" style="width: 100%;">Continue to Login</button>
             </form>
-            <p style="margin-top: 1.5rem; font-size: 0.9rem; text-align: center;">
-                Don't have an account? <a href="mailto:sales@routecrmpro.com" style="color: var(--primary);">Contact us</a>
-            </p>
+            <p style="margin-top: 1.5rem; font-size: 0.9rem; text-align: center;">Don't have an account? <a href="mailto:sales@routecrmpro.com" style="color: var(--primary);">Contact us</a></p>
         </div>
     </div>
 
     <script>
-        function openLogin() {
-            document.getElementById('loginModal').classList.add('active');
-        }
-        
-        function closeLogin() {
-            document.getElementById('loginModal').classList.remove('active');
-        }
-        
-        function goToPortal(e) {
-            e.preventDefault();
-            const slug = document.getElementById('companySlug').value.toLowerCase().trim();
-            if (slug) {
-                // For now, use query param. Later can switch to subdomain
-                window.location.href = '/app?tenant=' + slug;
+        const defaultPlans = [
+            { name: 'Starter', description: 'For small operations', price: 49, period: 'month', featured: false, features: ['Up to 10 users', '2 distribution centers', '15 trucks', '200 customers', 'Email support'] },
+            { name: 'Professional', description: 'For growing companies', price: 149, period: 'month', featured: true, features: ['Up to 50 users', '10 distribution centers', '50 trucks', '1,000 customers', 'Priority support', 'API access'] },
+            { name: 'Enterprise', description: 'For large distributors', price: null, period: null, featured: false, features: ['Unlimited users', 'Unlimited locations', 'Unlimited trucks', 'Dedicated support', 'Custom integrations', 'On-premise option'] }
+        ];
+
+        async function loadSettings() {
+            try {
+                const response = await fetch('/.netlify/functions/settings');
+                if (response.ok) {
+                    const settings = await response.json();
+                    if (settings.hero) {
+                        document.getElementById('heroBadge').textContent = settings.hero.badge;
+                        document.getElementById('heroTitle').textContent = settings.hero.title;
+                        document.getElementById('heroSubtitle').textContent = settings.hero.subtitle;
+                    }
+                    if (settings.pricing && settings.pricing.plans) {
+                        renderPricing(settings.pricing.plans);
+                    } else {
+                        renderPricing(defaultPlans);
+                    }
+                } else {
+                    renderPricing(defaultPlans);
+                }
+            } catch (err) {
+                renderPricing(defaultPlans);
             }
         }
-        
-        // Close modal on outside click
-        document.getElementById('loginModal').addEventListener('click', function(e) {
-            if (e.target === this) closeLogin();
-        });
-        
-        // Close modal on escape key
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') closeLogin();
-        });
+
+        function renderPricing(plans) {
+            document.getElementById('pricingGrid').innerHTML = plans.map(plan => `
+                <div class="price-card ${plan.featured ? 'featured' : ''}">
+                    <h3>${plan.name}</h3>
+                    <p style="color: var(--text-muted);">${plan.description}</p>
+                    <div class="price">${plan.price ? '$' + plan.price : 'Custom'}<span>${plan.period ? '/' + plan.period : ''}</span></div>
+                    <ul>${plan.features.map(f => `<li>${f}</li>`).join('')}</ul>
+                    <a href="${plan.price ? '#' : 'mailto:sales@routecrmpro.com'}" ${plan.price ? 'onclick="openLogin()"' : ''} class="btn ${plan.featured ? 'btn-primary' : 'btn-secondary'}" style="width: 100%;">${plan.price ? 'Get Started' : 'Contact Sales'}</a>
+                </div>
+            `).join('');
+        }
+
+        function openLogin() { document.getElementById('loginModal').classList.add('active'); }
+        function closeLogin() { document.getElementById('loginModal').classList.remove('active'); }
+        function goToPortal(e) { e.preventDefault(); const slug = document.getElementById('companySlug').value.toLowerCase().trim(); if (slug) window.location.href = '/app?tenant=' + slug; }
+        document.getElementById('loginModal').addEventListener('click', function(e) { if (e.target === this) closeLogin(); });
+        document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeLogin(); });
+        loadSettings();
     </script>
 </body>
 </html>
