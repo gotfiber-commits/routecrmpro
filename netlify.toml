@@ -39,3 +39,7 @@
   port = 8888
   targetPort = 3000
   autoLaunch = false
+
+# Scheduled billing cycle - runs daily at 6 AM UTC
+[functions."billing-cycle"]
+  schedule = "0 6 * * *"
