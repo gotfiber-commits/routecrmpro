@@ -12,6 +12,7 @@
             --secondary: #8B5CF6;
             --accent: #F59E0B;
             --success: #10B981;
+            --danger: #EF4444;
             --bg-dark: #0F172A;
             --bg-card: #1E293B;
             --bg-hover: #334155;
@@ -21,24 +22,61 @@
             --border: #334155;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Outfit', sans-serif; background: var(--bg-dark); color: var(--text-primary); line-height: 1.6; }
+        body { font-family: 'Outfit', sans-serif; background: var(--bg-dark); color: var(--text-primary); line-height: 1.6; min-height: 100vh; }
+        
+        /* Navigation */
         nav { display: flex; justify-content: space-between; align-items: center; padding: 1.5rem 5%; max-width: 1400px; margin: 0 auto; }
-        .logo { display: flex; align-items: center; gap: 0.75rem; font-size: 1.5rem; font-weight: 700; }
+        .logo { display: flex; align-items: center; gap: 0.75rem; font-size: 1.5rem; font-weight: 700; text-decoration: none; color: var(--text-primary); }
         .logo-icon { width: 45px; height: 45px; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
         .nav-links { display: flex; gap: 2rem; align-items: center; }
         .nav-links a { color: var(--text-secondary); text-decoration: none; font-weight: 500; transition: color 0.2s; }
         .nav-links a:hover { color: var(--text-primary); }
+        
+        /* Buttons */
         .btn { padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-family: inherit; font-size: 1rem; text-decoration: none; display: inline-block; transition: all 0.2s; }
         .btn-primary { background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); color: white; }
         .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4); }
+        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
         .btn-secondary { background: transparent; color: var(--text-primary); border: 2px solid var(--border); }
         .btn-secondary:hover { background: var(--bg-hover); }
         .btn-large { padding: 1rem 2rem; font-size: 1.1rem; }
-        .hero { text-align: center; padding: 6rem 5% 8rem; max-width: 1000px; margin: 0 auto; }
-        .hero-badge { display: inline-block; background: rgba(99, 102, 241, 0.1); border: 1px solid var(--primary); color: var(--primary); padding: 0.5rem 1rem; border-radius: 50px; font-size: 0.9rem; font-weight: 500; margin-bottom: 2rem; }
-        .hero h1 { font-size: 3.5rem; font-weight: 800; line-height: 1.1; margin-bottom: 1.5rem; background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .hero p { font-size: 1.25rem; color: var(--text-secondary); max-width: 700px; margin: 0 auto 2.5rem; }
-        .hero-buttons { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+        
+        /* Hero Section */
+        .hero { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; align-items: center; padding: 4rem 5%; max-width: 1400px; margin: 0 auto; min-height: calc(100vh - 200px); }
+        .hero-content { }
+        .hero-badge { display: inline-block; background: rgba(99, 102, 241, 0.1); border: 1px solid var(--primary); color: var(--primary); padding: 0.5rem 1rem; border-radius: 50px; font-size: 0.9rem; font-weight: 500; margin-bottom: 1.5rem; }
+        .hero h1 { font-size: 3rem; font-weight: 800; line-height: 1.1; margin-bottom: 1.5rem; background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .hero p { font-size: 1.15rem; color: var(--text-secondary); margin-bottom: 2rem; }
+        .hero-features { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 2rem; }
+        .hero-feature { display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary); font-size: 0.95rem; }
+        .hero-feature span { color: var(--success); }
+        
+        /* Login Card */
+        .login-card { background: var(--bg-card); border-radius: 20px; padding: 2.5rem; border: 1px solid var(--border); max-width: 420px; margin-left: auto; }
+        .login-card h2 { font-size: 1.5rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+        .login-card > p { color: var(--text-secondary); margin-bottom: 1.5rem; font-size: 0.95rem; }
+        
+        /* Form Styles */
+        .form-group { margin-bottom: 1.25rem; }
+        .form-label { display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-weight: 500; font-size: 0.9rem; }
+        .form-input { width: 100%; padding: 0.875rem 1rem; background: var(--bg-dark); border: 2px solid var(--border); border-radius: 10px; color: var(--text-primary); font-size: 1rem; font-family: inherit; transition: border-color 0.2s; }
+        .form-input:focus { outline: none; border-color: var(--primary); }
+        .form-input::placeholder { color: var(--text-muted); }
+        
+        .error-message { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); color: var(--danger); padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.9rem; display: none; }
+        .error-message.show { display: block; }
+        
+        .success-message { background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); color: var(--success); padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.9rem; display: none; }
+        .success-message.show { display: block; }
+        
+        .form-footer { margin-top: 1.5rem; text-align: center; font-size: 0.9rem; color: var(--text-muted); }
+        .form-footer a { color: var(--primary); text-decoration: none; }
+        .form-footer a:hover { text-decoration: underline; }
+        
+        .divider { display: flex; align-items: center; gap: 1rem; margin: 1.5rem 0; color: var(--text-muted); font-size: 0.85rem; }
+        .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+        
+        /* Features Section */
         .features { padding: 6rem 5%; background: var(--bg-card); }
         .features-container { max-width: 1200px; margin: 0 auto; }
         .section-title { text-align: center; margin-bottom: 4rem; }
@@ -50,6 +88,8 @@
         .feature-icon { font-size: 2.5rem; margin-bottom: 1rem; }
         .feature-card h3 { font-size: 1.25rem; margin-bottom: 0.75rem; }
         .feature-card p { color: var(--text-secondary); }
+        
+        /* Pricing Section */
         .pricing { padding: 6rem 5%; max-width: 1200px; margin: 0 auto; }
         .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; }
         .price-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 2.5rem; text-align: center; position: relative; }
@@ -61,44 +101,85 @@
         .price-card ul { list-style: none; text-align: left; margin: 2rem 0; }
         .price-card li { padding: 0.5rem 0; color: var(--text-secondary); }
         .price-card li::before { content: '✓'; color: var(--success); margin-right: 0.75rem; font-weight: bold; }
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
-        .modal-overlay.active { display: flex; }
-        .modal { background: var(--bg-card); border-radius: 16px; width: 100%; max-width: 450px; padding: 2.5rem; position: relative; }
-        .modal-close { position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; }
-        .modal h2 { margin-bottom: 0.5rem; }
-        .modal p { color: var(--text-secondary); margin-bottom: 1.5rem; }
-        .form-group { margin-bottom: 1.25rem; }
-        .form-label { display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-weight: 500; }
-        .form-input { width: 100%; padding: 0.875rem 1rem; background: var(--bg-dark); border: 2px solid var(--border); border-radius: 8px; color: var(--text-primary); font-size: 1rem; font-family: inherit; }
-        .form-input:focus { outline: none; border-color: var(--primary); }
-        .input-suffix { display: flex; align-items: center; }
-        .input-suffix input { border-radius: 8px 0 0 8px; }
-        .input-suffix span { background: var(--bg-hover); border: 2px solid var(--border); border-left: none; padding: 0.875rem 1rem; border-radius: 0 8px 8px 0; color: var(--text-muted); white-space: nowrap; }
+        
+        /* Footer */
         footer { background: var(--bg-card); padding: 3rem 5%; text-align: center; border-top: 1px solid var(--border); }
         footer p { color: var(--text-muted); }
         footer a { color: var(--text-secondary); text-decoration: none; }
         footer a:hover { color: var(--primary); }
-        @media (max-width: 768px) { .hero h1 { font-size: 2.5rem; } .nav-links { display: none; } .price-card.featured { transform: scale(1); } }
+        
+        /* Loading Spinner */
+        .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: white; animation: spin 0.8s linear infinite; margin-right: 0.5rem; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        /* Responsive */
+        @media (max-width: 968px) {
+            .hero { grid-template-columns: 1fr; text-align: center; padding: 2rem 5%; }
+            .hero h1 { font-size: 2.25rem; }
+            .login-card { margin: 0 auto; max-width: 100%; }
+            .hero-features { justify-content: center; }
+            .nav-links { display: none; }
+        }
+        @media (max-width: 768px) {
+            .price-card.featured { transform: scale(1); }
+        }
     </style>
 </head>
 <body>
     <nav>
-        <div class="logo"><div class="logo-icon">🚛</div><span>RouteCRMPro</span></div>
+        <a href="/" class="logo"><div class="logo-icon">🚛</div><span>RouteCRMPro</span></a>
         <div class="nav-links">
             <a href="#features">Features</a>
             <a href="#pricing">Pricing</a>
-            <a href="#" onclick="openLogin()">Customer Login</a>
-            <a href="/admin" class="btn btn-secondary">Admin Portal</a>
+            <a href="mailto:sales@routecrmpro.com">Contact Sales</a>
         </div>
     </nav>
 
     <section class="hero">
-        <div class="hero-badge" id="heroBadge">🚀 Now serving propane distributors nationwide</div>
-        <h1 id="heroTitle">Streamline Your Propane Delivery Operations</h1>
-        <p id="heroSubtitle">Route optimization, customer management, GPS tracking, and billing - all in one powerful platform built for fuel distribution companies.</p>
-        <div class="hero-buttons">
-            <a href="#" onclick="openLogin()" class="btn btn-primary btn-large">Access Your Account</a>
-            <a href="#pricing" class="btn btn-secondary btn-large">View Pricing</a>
+        <div class="hero-content">
+            <div class="hero-badge" id="heroBadge">🚀 Now serving propane distributors nationwide</div>
+            <h1 id="heroTitle">Streamline Your Propane Delivery Operations</h1>
+            <p id="heroSubtitle">Route optimization, customer management, GPS tracking, and billing - all in one powerful platform built for fuel distribution companies.</p>
+            <div class="hero-features">
+                <div class="hero-feature"><span>✓</span> Smart Route Optimization</div>
+                <div class="hero-feature"><span>✓</span> Real-Time GPS Tracking</div>
+                <div class="hero-feature"><span>✓</span> Customer Management</div>
+                <div class="hero-feature"><span>✓</span> Automated Billing</div>
+                <div class="hero-feature"><span>✓</span> Mobile Driver App</div>
+                <div class="hero-feature"><span>✓</span> Fleet Management</div>
+            </div>
+        </div>
+        
+        <div class="login-card">
+            <h2>🔐 Customer Portal</h2>
+            <p>Sign in to access your company's delivery management system</p>
+            
+            <div class="error-message" id="errorMessage"></div>
+            <div class="success-message" id="successMessage"></div>
+            
+            <form id="loginForm" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label class="form-label">Email or Username</label>
+                    <input type="text" id="loginId" class="form-input" placeholder="you@company.com" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" id="password" class="form-input" placeholder="Enter your password" required autocomplete="current-password">
+                </div>
+                <button type="submit" id="loginBtn" class="btn btn-primary" style="width: 100%; padding: 1rem;">
+                    Sign In to Portal
+                </button>
+            </form>
+            
+            <div class="divider">or</div>
+            
+            <button onclick="showCompanyLogin()" class="btn btn-secondary" style="width: 100%;">
+                Sign in with Company ID
+            </button>
+            
+            <div class="form-footer">
+                <p>Don't have an account? <a href="mailto:sales@routecrmpro.com">Contact Sales</a></p>
+            </div>
         </div>
     </section>
 
@@ -113,7 +194,7 @@
                 <div class="feature-card"><div class="feature-icon">👥</div><h3>Customer Management</h3><p>Track tank sizes, delivery history, pricing tiers, and automate scheduling based on usage patterns.</p></div>
                 <div class="feature-card"><div class="feature-icon">📍</div><h3>Real-Time GPS Tracking</h3><p>Know where every truck is. Monitor deliveries in progress and keep customers informed.</p></div>
                 <div class="feature-card"><div class="feature-icon">📦</div><h3>Order Management</h3><p>From order entry to delivery confirmation. Handle will-calls, scheduled deliveries, and automatic refills.</p></div>
-                <div class="feature-card"><div class="feature-icon">🚚</div><h3>Fleet Management</h3><p>Track truck capacity, maintenance schedules, and driver assignments all in one place.</p></div>
+                <div class="feature-card"><div class="feature-icon">🚚</div><h3>Fleet Management</h3><p>Track truck capacity, maintenance schedules, DOT compliance, and driver assignments all in one place.</p></div>
                 <div class="feature-card"><div class="feature-icon">💰</div><h3>Billing & Payments</h3><p>Generate invoices, track payments, manage customer balances, and integrate with your accounting.</p></div>
             </div>
         </div>
@@ -128,15 +209,16 @@
     </section>
 
     <footer>
-        <p>© 2024 RouteCRMPro. All rights reserved. | <a href="/admin">Admin Portal</a></p>
+        <p>© 2024 RouteCRMPro. All rights reserved. | <a href="mailto:support@routecrmpro.com">Support</a> | <a href="mailto:sales@routecrmpro.com">Sales</a></p>
     </footer>
 
-    <div class="modal-overlay" id="loginModal">
+    <!-- Company ID Login Modal -->
+    <div class="modal-overlay" id="companyModal">
         <div class="modal">
-            <button class="modal-close" onclick="closeLogin()">&times;</button>
-            <h2>🚛 Customer Login</h2>
-            <p>Enter your company identifier to access your portal</p>
-            <form onsubmit="goToPortal(event)">
+            <button class="modal-close" onclick="closeCompanyModal()">&times;</button>
+            <h2>🏢 Company Login</h2>
+            <p>Enter your company identifier to go directly to your portal</p>
+            <form onsubmit="goToCompanyPortal(event)">
                 <div class="form-group">
                     <label class="form-label">Company ID</label>
                     <div class="input-suffix">
@@ -144,34 +226,43 @@
                         <span>.routecrmpro.com</span>
                     </div>
                 </div>
-                <button type="submit" class="btn btn-primary" style="width: 100%;">Continue to Login</button>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Continue to Company Portal</button>
             </form>
-            <p style="margin-top: 1.5rem; font-size: 0.9rem; text-align: center;">Don't have an account? <a href="mailto:sales@routecrmpro.com" style="color: var(--primary);">Contact us</a></p>
         </div>
     </div>
 
+    <style>
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: var(--bg-card); border-radius: 16px; width: 100%; max-width: 450px; padding: 2.5rem; position: relative; }
+        .modal-close { position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; }
+        .modal h2 { margin-bottom: 0.5rem; }
+        .modal p { color: var(--text-secondary); margin-bottom: 1.5rem; }
+        .input-suffix { display: flex; align-items: center; }
+        .input-suffix input { border-radius: 10px 0 0 10px; }
+        .input-suffix span { background: var(--bg-hover); border: 2px solid var(--border); border-left: none; padding: 0.875rem 1rem; border-radius: 0 10px 10px 0; color: var(--text-muted); white-space: nowrap; }
+    </style>
+
     <script>
+        // Default pricing plans
         const defaultPlans = [
             { name: 'Starter', description: 'For small operations', price: 49, period: 'month', featured: false, features: ['Up to 10 users', '2 distribution centers', '15 trucks', '200 customers', 'Email support'] },
             { name: 'Professional', description: 'For growing companies', price: 149, period: 'month', featured: true, features: ['Up to 50 users', '10 distribution centers', '50 trucks', '1,000 customers', 'Priority support', 'API access'] },
             { name: 'Enterprise', description: 'For large distributors', price: null, period: null, featured: false, features: ['Unlimited users', 'Unlimited locations', 'Unlimited trucks', 'Dedicated support', 'Custom integrations', 'On-premise option'] }
         ];
 
+        // Load settings and pricing
         async function loadSettings() {
             try {
                 const response = await fetch('/.netlify/functions/settings');
                 if (response.ok) {
                     const settings = await response.json();
                     if (settings.hero) {
-                        document.getElementById('heroBadge').textContent = settings.hero.badge;
-                        document.getElementById('heroTitle').textContent = settings.hero.title;
-                        document.getElementById('heroSubtitle').textContent = settings.hero.subtitle;
+                        if (settings.hero.badge) document.getElementById('heroBadge').textContent = settings.hero.badge;
+                        if (settings.hero.title) document.getElementById('heroTitle').textContent = settings.hero.title;
+                        if (settings.hero.subtitle) document.getElementById('heroSubtitle').textContent = settings.hero.subtitle;
                     }
-                    if (settings.pricing && settings.pricing.plans) {
-                        renderPricing(settings.pricing.plans);
-                    } else {
-                        renderPricing(defaultPlans);
-                    }
+                    renderPricing(settings.pricing?.plans || defaultPlans);
                 } else {
                     renderPricing(defaultPlans);
                 }
@@ -187,17 +278,114 @@
                     <p style="color: var(--text-muted);">${plan.description}</p>
                     <div class="price">${plan.price ? '$' + plan.price : 'Custom'}<span>${plan.period ? '/' + plan.period : ''}</span></div>
                     <ul>${plan.features.map(f => `<li>${f}</li>`).join('')}</ul>
-                    <a href="${plan.price ? '#' : 'mailto:sales@routecrmpro.com'}" ${plan.price ? 'onclick="openLogin()"' : ''} class="btn ${plan.featured ? 'btn-primary' : 'btn-secondary'}" style="width: 100%;">${plan.price ? 'Get Started' : 'Contact Sales'}</a>
+                    <a href="${plan.price ? '#' : 'mailto:sales@routecrmpro.com'}" class="btn ${plan.featured ? 'btn-primary' : 'btn-secondary'}" style="width: 100%;">${plan.price ? 'Get Started' : 'Contact Sales'}</a>
                 </div>
             `).join('');
         }
 
-        function openLogin() { document.getElementById('loginModal').classList.add('active'); }
-        function closeLogin() { document.getElementById('loginModal').classList.remove('active'); }
-        function goToPortal(e) { e.preventDefault(); const slug = document.getElementById('companySlug').value.toLowerCase().trim(); if (slug) window.location.href = '/app?tenant=' + slug; }
-        document.getElementById('loginModal').addEventListener('click', function(e) { if (e.target === this) closeLogin(); });
-        document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeLogin(); });
+        // Handle portal login with email/username
+        async function handleLogin(event) {
+            event.preventDefault();
+            
+            const loginId = document.getElementById('loginId').value.trim();
+            const password = document.getElementById('password').value;
+            const loginBtn = document.getElementById('loginBtn');
+            const errorMsg = document.getElementById('errorMessage');
+            const successMsg = document.getElementById('successMessage');
+            
+            // Reset messages
+            errorMsg.classList.remove('show');
+            successMsg.classList.remove('show');
+            
+            // Show loading state
+            loginBtn.disabled = true;
+            loginBtn.innerHTML = '<span class="spinner"></span>Signing in...';
+            
+            try {
+                const response = await fetch('/.netlify/functions/auth/portal-login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: loginId, password })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Login failed');
+                }
+                
+                // Store token and user info
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('user', JSON.stringify(data.user));
+                localStorage.setItem('company', JSON.stringify(data.company));
+                
+                // Show success message
+                successMsg.textContent = `Welcome back, ${data.user.name}! Redirecting to ${data.company.name}...`;
+                successMsg.classList.add('show');
+                
+                // Redirect to tenant app
+                setTimeout(() => {
+                    window.location.href = data.redirect || `/app.html?tenant=${data.company.subdomain}`;
+                }, 1000);
+                
+            } catch (err) {
+                errorMsg.textContent = err.message;
+                errorMsg.classList.add('show');
+                loginBtn.disabled = false;
+                loginBtn.innerHTML = 'Sign In to Portal';
+            }
+        }
+
+        // Company ID modal functions
+        function showCompanyLogin() {
+            document.getElementById('companyModal').classList.add('active');
+        }
+        
+        function closeCompanyModal() {
+            document.getElementById('companyModal').classList.remove('active');
+        }
+        
+        function goToCompanyPortal(e) {
+            e.preventDefault();
+            const slug = document.getElementById('companySlug').value.toLowerCase().trim();
+            if (slug) {
+                window.location.href = '/app.html?tenant=' + slug;
+            }
+        }
+
+        // Modal close handlers
+        document.getElementById('companyModal').addEventListener('click', function(e) {
+            if (e.target === this) closeCompanyModal();
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeCompanyModal();
+        });
+
+        // Check if already logged in
+        function checkExistingSession() {
+            const token = localStorage.getItem('token');
+            const company = localStorage.getItem('company');
+            if (token && company) {
+                try {
+                    const companyData = JSON.parse(company);
+                    if (companyData.subdomain) {
+                        // User is already logged in, show option to continue
+                        const successMsg = document.getElementById('successMessage');
+                        successMsg.innerHTML = `Already signed in to <strong>${companyData.name}</strong>. <a href="/app.html?tenant=${companyData.subdomain}" style="color: var(--success);">Continue to Portal →</a>`;
+                        successMsg.classList.add('show');
+                    }
+                } catch (e) {
+                    // Invalid stored data, clear it
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    localStorage.removeItem('company');
+                }
+            }
+        }
+
+        // Initialize
         loadSettings();
+        checkExistingSession();
     </script>
 </body>
 </html>
