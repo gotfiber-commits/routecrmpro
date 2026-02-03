@@ -14,7 +14,12 @@ exports.handler = async (event, context) => {
     const method = event.httpMethod;
 
     try {
-        // POST /auth/login - Tenant user login
+        // POST /auth/portal-login - Universal login (finds company by email)
+        if (method === 'POST' && path === '/portal-login') {
+            return await handlePortalLogin(event);
+        }
+
+        // POST /auth/login - Tenant user login (requires tenant context)
         if (method === 'POST' && (path === '/login' || path === '')) {
             return await handleLogin(event);
         }
@@ -35,6 +40,110 @@ exports.handler = async (event, context) => {
         return error('Internal server error', 500);
     }
 };
+
+// Universal Portal Login - finds user by email across all companies
+async function handlePortalLogin(event) {
+    const body = parseBody(event);
+    const { email, password, username } = body;
+
+    // Accept either email or username
+    const loginId = email || username;
+
+    if (!loginId || !password) {
+        return error('Email/username and password required', 400);
+    }
+
+    // Find user by email or username across all companies
+    const result = await query(
+        `SELECT u.*, c.id as company_id, c.name as company_name, c.subdomain, c.plan, c.status as company_status, c.plan_expires_at
+        FROM users u
+        JOIN companies c ON u.company_id = c.id
+        WHERE (LOWER(u.email) = LOWER($1) OR LOWER(u.username) = LOWER($1))
+        AND u.status = 'active'
+        LIMIT 1`,
+        [loginId]
+    );
+
+    const user = result.rows[0];
+
+    if (!user) {
+        return error('Invalid email/username or password', 401);
+    }
+
+    // Check company status
+    if (user.company_status !== 'active') {
+        return error('Your company account is not active. Please contact support.', 403);
+    }
+
+    // Check trial expiry
+    if (user.plan === 'trial' && user.plan_expires_at) {
+        const expiry = new Date(user.plan_expires_at);
+        if (expiry < new Date()) {
+            return error('Trial period has expired. Please upgrade your plan.', 403);
+        }
+    }
+
+    // Verify password
+    const validPassword = await verifyPassword(password, user.password_hash);
+
+    if (!validPassword) {
+        return error('Invalid email/username or password', 401);
+    }
+
+    // Update last login
+    await query(
+        'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+        [user.id]
+    );
+
+    // Log the login
+    try {
+        await query(
+            `INSERT INTO audit_log (company_id, user_id, action, entity_type, entity_id, ip_address)
+            VALUES ($1, $2, 'portal_login', 'user', $3, $4)`,
+            [user.company_id, user.id, user.id, event.headers['x-forwarded-for'] || 'unknown']
+        );
+    } catch (e) {
+        // Audit log failure shouldn't block login
+        console.log('Audit log error:', e.message);
+    }
+
+    // Generate token
+    const token = generateToken(user, user.company_id);
+
+    // Get user's DC info if assigned
+    let dcInfo = null;
+    if (user.dc_id) {
+        const dcResult = await query(
+            'SELECT id, code, name, city, state FROM distribution_centers WHERE id = $1',
+            [user.dc_id]
+        );
+        dcInfo = dcResult.rows[0] || null;
+    }
+
+    return success({
+        token,
+        user: {
+            id: user.id,
+            username: user.username,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            avatar: user.avatar,
+            dcId: user.dc_id,
+            driverId: user.driver_id,
+            lastLogin: user.last_login
+        },
+        company: {
+            id: user.company_id,
+            name: user.company_name,
+            subdomain: user.subdomain,
+            plan: user.plan
+        },
+        dc: dcInfo,
+        redirect: `/app.html?tenant=${user.subdomain}`
+    });
+}
 
 async function handleLogin(event) {
     const { username, password } = parseBody(event);
