@@ -8,8 +8,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
     <script src="https://js.stripe.com/v3/"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDlnoisXs3xJAGtyYCBmLRCSuSN0hI2v98&libraries=places,geometry"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -103,8 +102,7 @@
         
         /* Map */
         .map-container { height: 400px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
-        #dashboard-map { height: 100%; width: 100%; }
-        .leaflet-container { background: var(--bg-dark); }
+        #dashboard-map, #route-map { height: 100%; width: 100%; }
         
         /* Misc */
         .loading { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4rem; }
@@ -139,7 +137,7 @@
         const api = {
             token: null,
             tenant: null,
-            setToken(t) { this.token = t; if (t) localStorage.setItem('authToken', t); else localStorage.removeItem('authToken'); },
+            setToken(t) { this.token = t; if (t) localStorage.setItem('token', t); else localStorage.removeItem('token'); },
             setTenant(t) { this.tenant = t; },
             async request(endpoint, options = {}) {
                 const url = `/.netlify/functions${endpoint}${endpoint.includes('?') ? '&' : '?'}tenant=${this.tenant}`;
@@ -293,7 +291,7 @@
                             <div className="loading"><div className="spinner"></div><div style={{marginTop:'1rem'}}>Loading...</div></div>
                         ) : (
                             <>
-                                {activeView === 'dashboard' && <DashboardView data={data} />}
+                                {activeView === 'dashboard' && <DashboardView data={data} onRefresh={loadData} onNavigate={(view, placeData) => { setActiveView(view); if (placeData) window.pendingRouteLocation = placeData; }} />}
                                 {activeView === 'customers' && <CustomersView data={data} onRefresh={loadData} />}
                                 {activeView === 'orders' && <OrdersView data={data} onRefresh={loadData} />}
                                 {activeView === 'routes' && <RoutesView data={data} onRefresh={loadData} />}
@@ -310,43 +308,210 @@
         }
 
         // =====================================================
-        // Dashboard View with Map
+        // Dashboard View with Map and Places Search
         // =====================================================
-        function DashboardView({ data }) {
+        function DashboardView({ data, onRefresh, onNavigate }) {
             const mapRef = useRef(null);
             const mapInstance = useRef(null);
+            const markersRef = useRef([]);
+            const searchInputRef = useRef(null);
+            const autocompleteRef = useRef(null);
+            const searchMarkerRef = useRef(null);
+            const [searchedPlace, setSearchedPlace] = useState(null);
+            const [showAddModal, setShowAddModal] = useState(false);
+            const [addingCustomer, setAddingCustomer] = useState(false);
 
             useEffect(() => {
                 if (!mapRef.current || mapInstance.current) return;
+
+                // Find company headquarters (first DC or primary DC)
+                const headquarters = (data?.distributionCenters || []).find(dc => dc.is_headquarters || dc.is_primary) 
+                    || (data?.distributionCenters || [])[0];
                 
-                // Initialize map
-                const map = L.map(mapRef.current).setView([39.8283, -98.5795], 4);
-                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                    attribution: '©OpenStreetMap, ©CartoDB'
-                }).addTo(map);
+                const hqLat = headquarters?.lat ? parseFloat(headquarters.lat) : 39.8283;
+                const hqLng = headquarters?.lng ? parseFloat(headquarters.lng) : -98.5795;
+                const hasHQ = headquarters?.lat && headquarters?.lng;
+
+                // Initialize Google Map (standard appearance)
+                const map = new google.maps.Map(mapRef.current, {
+                    center: { lat: hqLat, lng: hqLng },
+                    zoom: hasHQ ? 8 : 4,
+                    mapTypeControl: true,
+                    streetViewControl: true,
+                    fullscreenControl: true
+                });
                 mapInstance.current = map;
 
-                const bounds = [];
+                // Add 500 mile radius circle around HQ
+                const serviceAreaRef = { current: null };
+                if (hasHQ) {
+                    const radiusInMeters = 500 * 1609.34; // 500 miles to meters
+                    serviceAreaRef.current = new google.maps.Circle({
+                        map: map,
+                        center: { lat: hqLat, lng: hqLng },
+                        radius: radiusInMeters,
+                        fillColor: '#6366F1',
+                        fillOpacity: 0.08,
+                        strokeColor: '#6366F1',
+                        strokeOpacity: 0.4,
+                        strokeWeight: 2
+                    });
+                    
+                    // Fit map to show the service area circle
+                    map.fitBounds(serviceAreaRef.current.getBounds());
+                }
+
+                // Initialize Places Autocomplete
+                if (searchInputRef.current) {
+                    const autocomplete = new google.maps.places.Autocomplete(searchInputRef.current, {
+                        types: ['address'],
+                        componentRestrictions: { country: 'us' },
+                        fields: ['place_id', 'geometry', 'name', 'formatted_address', 'address_components']
+                    });
+                    autocomplete.bindTo('bounds', map);
+                    autocompleteRef.current = autocomplete;
+
+                    autocomplete.addListener('place_changed', () => {
+                        const place = autocomplete.getPlace();
+                        if (!place.geometry || !place.geometry.location) {
+                            console.log('No geometry for place');
+                            return;
+                        }
+
+                        // Parse address components
+                        let street = '', city = '', state = '', zip = '';
+                        (place.address_components || []).forEach(comp => {
+                            if (comp.types.includes('street_number')) street = comp.long_name + ' ';
+                            if (comp.types.includes('route')) street += comp.long_name;
+                            if (comp.types.includes('locality')) city = comp.long_name;
+                            if (comp.types.includes('administrative_area_level_1')) state = comp.short_name;
+                            if (comp.types.includes('postal_code')) zip = comp.long_name;
+                        });
+
+                        const placeData = {
+                            name: place.name || '',
+                            formatted_address: place.formatted_address,
+                            address: street.trim(),
+                            city: city,
+                            state: state,
+                            zip: zip,
+                            lat: place.geometry.location.lat(),
+                            lng: place.geometry.location.lng()
+                        };
+                        setSearchedPlace(placeData);
+
+                        // Clear previous search marker
+                        if (searchMarkerRef.current) {
+                            searchMarkerRef.current.setMap(null);
+                        }
+
+                        // Add new search marker
+                        const marker = new google.maps.Marker({
+                            position: place.geometry.location,
+                            map: map,
+                            title: place.formatted_address,
+                            animation: google.maps.Animation.DROP,
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: 12,
+                                fillColor: '#8B5CF6',
+                                fillOpacity: 1,
+                                strokeColor: '#ffffff',
+                                strokeWeight: 3
+                            }
+                        });
+                        searchMarkerRef.current = marker;
+
+                        // Create info window with action buttons
+                        const infoContent = document.createElement('div');
+                        infoContent.innerHTML = `
+                            <div style="color:#333;min-width:220px;padding:8px 0">
+                                <div style="font-weight:bold;font-size:14px;margin-bottom:8px">📍 ${place.formatted_address}</div>
+                                <div style="font-size:12px;color:#666;margin-bottom:12px">
+                                    Lat: ${placeData.lat.toFixed(6)}<br/>
+                                    Lng: ${placeData.lng.toFixed(6)}
+                                </div>
+                                <div style="display:flex;gap:8px">
+                                    <button id="add-customer-btn" style="flex:1;padding:8px 12px;background:#6366F1;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">+ Add Customer</button>
+                                    <button id="add-to-route-btn" style="flex:1;padding:8px 12px;background:#10B981;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px">+ Add to Route</button>
+                                </div>
+                            </div>
+                        `;
+
+                        const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+                        infoWindow.open(map, marker);
+
+                        // Add button click handlers after info window opens
+                        google.maps.event.addListenerOnce(infoWindow, 'domready', () => {
+                            document.getElementById('add-customer-btn')?.addEventListener('click', () => {
+                                setShowAddModal(true);
+                                infoWindow.close();
+                            });
+                            document.getElementById('add-to-route-btn')?.addEventListener('click', () => {
+                                // Navigate to routes with this location pre-filled
+                                if (onNavigate) {
+                                    onNavigate('routes', placeData);
+                                }
+                                infoWindow.close();
+                            });
+                        });
+
+                        // Pan to location
+                        if (place.geometry.viewport) {
+                            map.fitBounds(place.geometry.viewport);
+                        } else {
+                            map.setCenter(place.geometry.location);
+                            map.setZoom(15);
+                        }
+                    });
+                }
+
+                const bounds = new google.maps.LatLngBounds();
+                let hasMarkers = false;
 
                 // DC markers (warehouse icon)
                 (data?.distributionCenters || []).forEach(dc => {
                     if (dc.lat && dc.lng) {
-                        const icon = L.divIcon({ className: '', html: '<div style="font-size:28px;filter:drop-shadow(2px 2px 2px rgba(0,0,0,0.5))">🏭</div>', iconSize: [32, 32], iconAnchor: [16, 16] });
-                        L.marker([parseFloat(dc.lat), parseFloat(dc.lng)], { icon })
-                            .addTo(map)
-                            .bindPopup(`<div style="min-width:150px"><b>🏭 ${dc.name}</b><br/>${dc.address || ''}<br/>${dc.city || ''}, ${dc.state || ''}<br/>Capacity: ${(dc.capacity_gallons || 0).toLocaleString()} gal</div>`);
-                        bounds.push([parseFloat(dc.lat), parseFloat(dc.lng)]);
+                        const marker = new google.maps.Marker({
+                            position: { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) },
+                            map: map,
+                            title: dc.name,
+                            icon: {
+                                url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="#6366F1"><path d="M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6.9 3.45L12 11.09 5.1 7.63 12 4.18zM4 8.72l7 3.5v7.06l-7-3.5V8.72zm9 10.56V12.22l7-3.5v7.06l-7 3.5z"/></svg>'),
+                                scaledSize: new google.maps.Size(32, 32),
+                                anchor: new google.maps.Point(16, 16)
+                            }
+                        });
+                        const infoWindow = new google.maps.InfoWindow({
+                            content: `<div style="color:#333;min-width:150px"><b>🏭 ${dc.name}</b><br/>${dc.address || ''}<br/>${dc.city || ''}, ${dc.state || ''}<br/>Capacity: ${(dc.capacity_gallons || 0).toLocaleString()} gal</div>`
+                        });
+                        marker.addListener('click', () => infoWindow.open(map, marker));
+                        markersRef.current.push(marker);
+                        bounds.extend(marker.getPosition());
+                        hasMarkers = true;
                     }
                 });
 
                 // Truck markers with GPS
                 (data?.trucks || []).forEach(truck => {
                     if (truck.current_lat && truck.current_lng) {
-                        const icon = L.divIcon({ className: '', html: `<div style="font-size:24px;filter:drop-shadow(2px 2px 2px rgba(0,0,0,0.5))">🚚</div>`, iconSize: [28, 28], iconAnchor: [14, 14] });
-                        L.marker([parseFloat(truck.current_lat), parseFloat(truck.current_lng)], { icon })
-                            .addTo(map)
-                            .bindPopup(`<b>🚚 ${truck.name || truck.code}</b><br/>Status: ${truck.status}<br/>Speed: ${truck.speed || 0} mph`);
-                        bounds.push([parseFloat(truck.current_lat), parseFloat(truck.current_lng)]);
+                        const marker = new google.maps.Marker({
+                            position: { lat: parseFloat(truck.current_lat), lng: parseFloat(truck.current_lng) },
+                            map: map,
+                            title: truck.name || truck.code,
+                            icon: {
+                                url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#F59E0B"><path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>'),
+                                scaledSize: new google.maps.Size(28, 28),
+                                anchor: new google.maps.Point(14, 14)
+                            }
+                        });
+                        const infoWindow = new google.maps.InfoWindow({
+                            content: `<div style="color:#333"><b>🚚 ${truck.name || truck.code}</b><br/>Status: ${truck.status}<br/>Speed: ${truck.speed || 0} mph</div>`
+                        });
+                        marker.addListener('click', () => infoWindow.open(map, marker));
+                        markersRef.current.push(marker);
+                        bounds.extend(marker.getPosition());
+                        hasMarkers = true;
                     }
                 });
 
@@ -354,20 +519,78 @@
                 (data?.customers || []).slice(0, 100).forEach(cust => {
                     if (cust.lat && cust.lng) {
                         const color = cust.current_level < 25 ? '#EF4444' : cust.current_level < 50 ? '#F59E0B' : '#10B981';
-                        const icon = L.divIcon({ className: '', html: `<div style="width:12px;height:12px;background:${color};border-radius:50%;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3)"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
-                        L.marker([parseFloat(cust.lat), parseFloat(cust.lng)], { icon })
-                            .addTo(map)
-                            .bindPopup(`<b>${cust.name}</b><br/>${cust.address || ''}<br/>${cust.city || ''}, ${cust.state || ''}<br/>Tank: ${cust.current_level || 0}%`);
-                        bounds.push([parseFloat(cust.lat), parseFloat(cust.lng)]);
+                        const marker = new google.maps.Marker({
+                            position: { lat: parseFloat(cust.lat), lng: parseFloat(cust.lng) },
+                            map: map,
+                            title: cust.name,
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: 8,
+                                fillColor: color,
+                                fillOpacity: 1,
+                                strokeColor: '#ffffff',
+                                strokeWeight: 2
+                            }
+                        });
+                        const infoWindow = new google.maps.InfoWindow({
+                            content: `<div style="color:#333"><b>${cust.name}</b><br/>${cust.address || ''}<br/>${cust.city || ''}, ${cust.state || ''}<br/>Tank: ${cust.current_level || 0}%</div>`
+                        });
+                        marker.addListener('click', () => infoWindow.open(map, marker));
+                        markersRef.current.push(marker);
+                        bounds.extend(marker.getPosition());
+                        hasMarkers = true;
                     }
                 });
 
-                if (bounds.length > 0) {
-                    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
+                if (hasMarkers) {
+                    map.fitBounds(bounds);
+                    // Limit max zoom after fitBounds
+                    google.maps.event.addListenerOnce(map, 'bounds_changed', () => {
+                        if (map.getZoom() > 12) map.setZoom(12);
+                    });
                 }
 
-                return () => { map.remove(); mapInstance.current = null; };
+                return () => {
+                    markersRef.current.forEach(m => m.setMap(null));
+                    markersRef.current = [];
+                    if (searchMarkerRef.current) searchMarkerRef.current.setMap(null);
+                    mapInstance.current = null;
+                };
             }, [data]);
+
+            // Handle quick add customer from map search
+            const handleQuickAddCustomer = async () => {
+                if (!searchedPlace) return;
+                setAddingCustomer(true);
+                try {
+                    const customerData = {
+                        code: 'CUST-' + Date.now().toString().slice(-6),
+                        name: searchedPlace.name || 'New Customer',
+                        address: searchedPlace.address,
+                        city: searchedPlace.city,
+                        state: searchedPlace.state,
+                        zip: searchedPlace.zip,
+                        lat: searchedPlace.lat,
+                        lng: searchedPlace.lng,
+                        status: 'active',
+                        customer_type: 'residential',
+                        tank_size: 500,
+                        current_level: 50,
+                        price_per_gallon: 2.50,
+                        payment_terms: 'net30'
+                    };
+                    await api.request('/data/customers', { method: 'POST', body: JSON.stringify(customerData) });
+                    setShowAddModal(false);
+                    setSearchedPlace(null);
+                    if (searchMarkerRef.current) searchMarkerRef.current.setMap(null);
+                    if (searchInputRef.current) searchInputRef.current.value = '';
+                    if (onRefresh) onRefresh();
+                } catch (err) {
+                    alert('Error adding customer: ' + err.message);
+                } finally {
+                    setAddingCustomer(false);
+                }
+            };
 
             const pendingOrders = (data?.orders || []).filter(o => o.status === 'pending').length;
             const activeRoutes = (data?.routes || []).filter(r => r.status === 'planned' || r.status === 'in_progress').length;
@@ -406,22 +629,90 @@
                         </div>
                     </div>
 
-                    {/* Map */}
+                    {/* Map with Search */}
                     <div className="card">
-                        <div className="card-header">
+                        <div className="card-header" style={{flexWrap:'wrap',gap:'1rem'}}>
                             <h3>🗺️ Operations Map</h3>
-                            <div style={{fontSize:'0.8rem',color:'var(--text-muted)',display:'flex',gap:'1rem'}}>
-                                <span>🏭 DCs</span>
-                                <span>🚚 Trucks</span>
-                                <span style={{display:'flex',alignItems:'center',gap:'4px'}}><span style={{width:'10px',height:'10px',borderRadius:'50%',background:'#10B981'}}></span> OK</span>
-                                <span style={{display:'flex',alignItems:'center',gap:'4px'}}><span style={{width:'10px',height:'10px',borderRadius:'50%',background:'#F59E0B'}}></span> Low</span>
-                                <span style={{display:'flex',alignItems:'center',gap:'4px'}}><span style={{width:'10px',height:'10px',borderRadius:'50%',background:'#EF4444'}}></span> Critical</span>
+                            <div style={{display:'flex',alignItems:'center',gap:'1rem',flex:'1',justifyContent:'flex-end',flexWrap:'wrap'}}>
+                                <div style={{position:'relative',flex:'1',maxWidth:'400px',minWidth:'200px'}}>
+                                    <input 
+                                        ref={searchInputRef}
+                                        type="text" 
+                                        placeholder="🔍 Search address to add..." 
+                                        className="form-input"
+                                        style={{paddingRight:'2.5rem',fontSize:'0.9rem'}}
+                                    />
+                                    {searchedPlace && (
+                                        <button 
+                                            onClick={() => {
+                                                setSearchedPlace(null);
+                                                if (searchMarkerRef.current) searchMarkerRef.current.setMap(null);
+                                                if (searchInputRef.current) searchInputRef.current.value = '';
+                                            }}
+                                            style={{position:'absolute',right:'8px',top:'50%',transform:'translateY(-50%)',background:'none',border:'none',cursor:'pointer',fontSize:'1.2rem',color:'var(--text-muted)'}}
+                                        >×</button>
+                                    )}
+                                </div>
+                                <div style={{fontSize:'0.75rem',color:'var(--text-muted)',display:'flex',gap:'0.75rem',flexWrap:'wrap'}}>
+                                    <span>🏭 DCs</span>
+                                    <span>🚚 Trucks</span>
+                                    <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#10B981'}}></span>OK</span>
+                                    <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#F59E0B'}}></span>Low</span>
+                                    <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#EF4444'}}></span>Critical</span>
+                                    <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#8B5CF6'}}></span>Search</span>
+                                </div>
                             </div>
                         </div>
-                        <div className="map-container">
+                        <div className="map-container" style={{height:'450px'}}>
                             <div ref={mapRef} id="dashboard-map"></div>
                         </div>
+                        {searchedPlace && (
+                            <div style={{padding:'1rem',background:'var(--bg-dark)',borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'1rem'}}>
+                                <div>
+                                    <strong style={{color:'#8B5CF6'}}>📍 {searchedPlace.formatted_address}</strong>
+                                    <div style={{fontSize:'0.85rem',color:'var(--text-muted)',marginTop:'0.25rem'}}>
+                                        Coordinates: {searchedPlace.lat.toFixed(6)}, {searchedPlace.lng.toFixed(6)}
+                                    </div>
+                                </div>
+                                <div style={{display:'flex',gap:'0.5rem'}}>
+                                    <button className="btn btn-primary btn-sm" onClick={() => setShowAddModal(true)}>+ Add as Customer</button>
+                                    <button className="btn btn-success btn-sm" onClick={() => onNavigate && onNavigate('routes', searchedPlace)}>+ Add to Route</button>
+                                </div>
+                            </div>
+                        )}
                     </div>
+
+                    {/* Quick Add Customer Modal */}
+                    {showAddModal && searchedPlace && (
+                        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowAddModal(false)}>
+                            <div className="modal" style={{maxWidth:'500px'}}>
+                                <div className="modal-header">
+                                    <h3>➕ Quick Add Customer</h3>
+                                    <button className="modal-close" onClick={() => setShowAddModal(false)}>&times;</button>
+                                </div>
+                                <div className="modal-body">
+                                    <div style={{background:'var(--bg-dark)',padding:'1rem',borderRadius:'8px',marginBottom:'1rem'}}>
+                                        <div style={{fontWeight:'600',marginBottom:'0.5rem'}}>📍 Location</div>
+                                        <div style={{fontSize:'0.9rem',color:'var(--text-secondary)'}}>{searchedPlace.formatted_address}</div>
+                                        <div style={{fontSize:'0.8rem',color:'var(--text-muted)',marginTop:'0.5rem'}}>
+                                            {searchedPlace.address && <div>Street: {searchedPlace.address}</div>}
+                                            <div>City: {searchedPlace.city}, {searchedPlace.state} {searchedPlace.zip}</div>
+                                            <div>Lat: {searchedPlace.lat.toFixed(6)}, Lng: {searchedPlace.lng.toFixed(6)}</div>
+                                        </div>
+                                    </div>
+                                    <p style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>
+                                        This will create a new customer with the address above. You can edit additional details after creation.
+                                    </p>
+                                </div>
+                                <div className="modal-footer">
+                                    <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
+                                    <button className="btn btn-primary" onClick={handleQuickAddCustomer} disabled={addingCustomer}>
+                                        {addingCustomer ? 'Adding...' : 'Add Customer'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Row 1: Orders & Distribution Centers */}
                     <div className="grid-2">
@@ -540,10 +831,71 @@
         }
 
         // =====================================================
-        // Reusable Entity Modal
+        // Stable Form Input Component (prevents focus loss)
         // =====================================================
-        function EntityModal({ title, fields, data, onSave, onClose, loading, dcs }) {
-            const [formData, setFormData] = useState(data || {});
+        function FormInput({ name, label, type, value, onChange, required, placeholder, step, options }) {
+            const handleChange = (e) => {
+                let val = e.target.value;
+                if (type === 'number' && val !== '') {
+                    val = parseFloat(val);
+                }
+                if (type === 'checkbox') {
+                    val = e.target.checked;
+                }
+                onChange(name, val);
+            };
+
+            if (type === 'select') {
+                return (
+                    <div className="form-group">
+                        <label className="form-label">{label}{required && ' *'}</label>
+                        <select className="form-input" value={value || ''} onChange={handleChange} required={required}>
+                            <option value="">Select...</option>
+                            {(options || []).map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                        </select>
+                    </div>
+                );
+            }
+            if (type === 'textarea') {
+                return (
+                    <div className="form-group">
+                        <label className="form-label">{label}</label>
+                        <textarea className="form-input" rows="3" value={value || ''} onChange={handleChange} placeholder={placeholder}></textarea>
+                    </div>
+                );
+            }
+            if (type === 'checkbox') {
+                return (
+                    <div className="form-group">
+                        <label style={{display:'flex',alignItems:'center',gap:'0.5rem',cursor:'pointer'}}>
+                            <input type="checkbox" checked={!!value} onChange={handleChange} style={{width:'18px',height:'18px'}} />
+                            {label}
+                        </label>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="form-group">
+                    <label className="form-label">{label}{required && ' *'}</label>
+                    <input 
+                        type={type || 'text'} 
+                        className="form-input" 
+                        value={value ?? ''} 
+                        onChange={handleChange} 
+                        required={required}
+                        step={step}
+                        placeholder={placeholder}
+                    />
+                </div>
+            );
+        }
+
+        // =====================================================
+        // Reusable Entity Modal with Stable Form
+        // =====================================================
+        function EntityModal({ title, fields, data, onSave, onClose, loading }) {
+            const [formData, setFormData] = useState(() => ({ ...data }));
             const [error, setError] = useState('');
 
             const handleSubmit = async (e) => {
@@ -556,61 +908,65 @@
                 }
             };
 
-            const updateField = (name, value) => setFormData(prev => ({ ...prev, [name]: value }));
+            const handleFieldChange = (name, value) => {
+                setFormData(prev => ({ ...prev, [name]: value }));
+            };
 
-            const renderField = (field) => {
+            const renderField = (field, index) => {
                 if (field.type === 'row') {
-                    return <div key={field.key || Math.random()} className="form-row">{field.fields.map(f => renderField(f))}</div>;
+                    return (
+                        <div key={`row-${index}`} className="form-row">
+                            {field.fields.map((f, i) => (
+                                <FormInput
+                                    key={f.name}
+                                    name={f.name}
+                                    label={f.label}
+                                    type={f.type}
+                                    value={formData[f.name]}
+                                    onChange={handleFieldChange}
+                                    required={f.required}
+                                    placeholder={f.placeholder}
+                                    step={f.step}
+                                    options={f.options}
+                                />
+                            ))}
+                        </div>
+                    );
                 }
                 if (field.type === 'row3') {
-                    return <div key={field.key || Math.random()} className="form-row-3">{field.fields.map(f => renderField(f))}</div>;
-                }
-
-                const value = formData[field.name] ?? '';
-
-                if (field.type === 'select') {
                     return (
-                        <div className="form-group" key={field.name}>
-                            <label className="form-label">{field.label}{field.required && ' *'}</label>
-                            <select className="form-input" value={value} onChange={(e) => updateField(field.name, e.target.value)} required={field.required}>
-                                <option value="">Select...</option>
-                                {(field.options || []).map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                            </select>
-                        </div>
-                    );
-                }
-                if (field.type === 'textarea') {
-                    return (
-                        <div className="form-group" key={field.name}>
-                            <label className="form-label">{field.label}</label>
-                            <textarea className="form-input" rows="3" value={value} onChange={(e) => updateField(field.name, e.target.value)} placeholder={field.placeholder}></textarea>
-                        </div>
-                    );
-                }
-                if (field.type === 'checkbox') {
-                    return (
-                        <div className="form-group" key={field.name}>
-                            <label style={{display:'flex',alignItems:'center',gap:'0.5rem',cursor:'pointer'}}>
-                                <input type="checkbox" checked={!!formData[field.name]} onChange={(e) => updateField(field.name, e.target.checked)} style={{width:'18px',height:'18px'}} />
-                                {field.label}
-                            </label>
+                        <div key={`row3-${index}`} className="form-row-3">
+                            {field.fields.map((f, i) => (
+                                <FormInput
+                                    key={f.name}
+                                    name={f.name}
+                                    label={f.label}
+                                    type={f.type}
+                                    value={formData[f.name]}
+                                    onChange={handleFieldChange}
+                                    required={f.required}
+                                    placeholder={f.placeholder}
+                                    step={f.step}
+                                    options={f.options}
+                                />
+                            ))}
                         </div>
                     );
                 }
 
                 return (
-                    <div className="form-group" key={field.name}>
-                        <label className="form-label">{field.label}{field.required && ' *'}</label>
-                        <input 
-                            type={field.type || 'text'} 
-                            className="form-input" 
-                            value={value} 
-                            onChange={(e) => updateField(field.name, field.type === 'number' ? (e.target.value === '' ? '' : parseFloat(e.target.value)) : e.target.value)} 
-                            required={field.required}
-                            step={field.step}
-                            placeholder={field.placeholder}
-                        />
-                    </div>
+                    <FormInput
+                        key={field.name}
+                        name={field.name}
+                        label={field.label}
+                        type={field.type}
+                        value={formData[field.name]}
+                        onChange={handleFieldChange}
+                        required={field.required}
+                        placeholder={field.placeholder}
+                        step={field.step}
+                        options={field.options}
+                    />
                 );
             };
 
@@ -624,7 +980,7 @@
                         <form onSubmit={handleSubmit}>
                             <div className="modal-body">
                                 {error && <div className="error-message">{error}</div>}
-                                {fields.map(field => renderField(field))}
+                                {fields.map((field, index) => renderField(field, index))}
                             </div>
                             <div className="modal-footer">
                                 <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
@@ -754,16 +1110,175 @@
                         </table>
                     </div>
                     {showModal && (
-                        <EntityModal 
-                            title={editItem ? 'Edit Customer' : 'Add Customer'}
-                            fields={fields}
-                            data={editItem || { status: 'active', customer_type: 'residential', tank_size: 500, current_level: 50, price_per_gallon: 2.50, payment_terms: 'net30', minimum_level: 20 }}
+                        <CustomerFormModal
+                            editItem={editItem}
+                            dcOptions={dcOptions}
                             onSave={handleSave}
                             onClose={() => { setShowModal(false); setEditItem(null); }}
                             loading={loading}
                         />
                     )}
                 </>
+            );
+        }
+
+        // Customer Form Modal with Geocoding
+        function CustomerFormModal({ editItem, dcOptions, onSave, onClose, loading }) {
+            const defaultData = { status: 'active', customer_type: 'residential', tank_size: 500, current_level: 50, price_per_gallon: 2.50, payment_terms: 'net30', minimum_level: 20 };
+            const [formData, setFormData] = useState(() => editItem ? { ...editItem } : { ...defaultData });
+            const [error, setError] = useState('');
+            const [geocoding, setGeocoding] = useState(false);
+            const [geocodeMsg, setGeocodeMsg] = useState('');
+
+            const handleFieldChange = (name, value) => {
+                setFormData(prev => ({ ...prev, [name]: value }));
+                setGeocodeMsg(''); // Clear geocode message on any change
+            };
+
+            const handleGeocode = async () => {
+                if (!formData.address && !formData.city && !formData.state && !formData.zip) {
+                    setGeocodeMsg('Please enter an address first');
+                    return;
+                }
+                
+                setGeocoding(true);
+                setGeocodeMsg('');
+                
+                try {
+                    const response = await fetch('/.netlify/functions/geocode', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            address: formData.address,
+                            city: formData.city,
+                            state: formData.state,
+                            zip: formData.zip
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        setFormData(prev => ({
+                            ...prev,
+                            lat: data.lat,
+                            lng: data.lng
+                        }));
+                        setGeocodeMsg(`✓ Found: ${data.formatted_address}`);
+                    } else {
+                        setGeocodeMsg(`✗ ${data.error || 'Could not find address'}`);
+                    }
+                } catch (err) {
+                    setGeocodeMsg('✗ Geocoding service unavailable');
+                } finally {
+                    setGeocoding(false);
+                }
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                try {
+                    await onSave(formData);
+                } catch (err) {
+                    setError(err.message);
+                }
+            };
+
+            return (
+                <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+                    <div className="modal" style={{maxWidth:'700px'}}>
+                        <div className="modal-header">
+                            <h3>{editItem ? 'Edit Customer' : 'Add Customer'}</h3>
+                            <button className="modal-close" onClick={onClose}>&times;</button>
+                        </div>
+                        <form onSubmit={handleSubmit}>
+                            <div className="modal-body">
+                                {error && <div className="error-message">{error}</div>}
+                                
+                                <div className="form-row">
+                                    <FormInput name="code" label="Customer Code" value={formData.code} onChange={handleFieldChange} required placeholder="CUST-001" />
+                                    <FormInput name="name" label="Customer Name" value={formData.name} onChange={handleFieldChange} required />
+                                </div>
+                                
+                                <div className="form-row">
+                                    <FormInput name="contact_name" label="Contact Name" value={formData.contact_name} onChange={handleFieldChange} />
+                                    <FormInput name="phone" label="Phone" value={formData.phone} onChange={handleFieldChange} />
+                                </div>
+                                
+                                <FormInput name="email" label="Email" type="email" value={formData.email} onChange={handleFieldChange} />
+                                
+                                <div style={{background:'var(--bg-dark)',padding:'1rem',borderRadius:'8px',marginBottom:'1rem'}}>
+                                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'0.75rem'}}>
+                                        <strong style={{fontSize:'0.9rem'}}>📍 Address & Location</strong>
+                                        <button type="button" className="btn btn-sm btn-secondary" onClick={handleGeocode} disabled={geocoding} style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                                            {geocoding ? '⏳ Looking up...' : '🌐 Get Coordinates'}
+                                        </button>
+                                    </div>
+                                    
+                                    <FormInput name="address" label="Street Address" value={formData.address} onChange={handleFieldChange} placeholder="123 Main St" />
+                                    
+                                    <div className="form-row-3">
+                                        <FormInput name="city" label="City" value={formData.city} onChange={handleFieldChange} />
+                                        <FormInput name="state" label="State" value={formData.state} onChange={handleFieldChange} />
+                                        <FormInput name="zip" label="ZIP" value={formData.zip} onChange={handleFieldChange} />
+                                    </div>
+                                    
+                                    <div className="form-row">
+                                        <FormInput name="lat" label="Latitude" type="number" step="0.000001" value={formData.lat} onChange={handleFieldChange} placeholder="34.730369" />
+                                        <FormInput name="lng" label="Longitude" type="number" step="0.000001" value={formData.lng} onChange={handleFieldChange} placeholder="-86.586104" />
+                                    </div>
+                                    
+                                    {geocodeMsg && (
+                                        <div style={{fontSize:'0.85rem',marginTop:'0.5rem',color: geocodeMsg.startsWith('✓') ? 'var(--success)' : 'var(--danger)'}}>
+                                            {geocodeMsg}
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                <div className="form-row">
+                                    <FormInput name="customer_type" label="Customer Type" type="select" value={formData.customer_type} onChange={handleFieldChange} options={[
+                                        { value: 'residential', label: 'Residential' },
+                                        { value: 'commercial', label: 'Commercial' },
+                                        { value: 'industrial', label: 'Industrial' }
+                                    ]} />
+                                    <FormInput name="preferred_dc_id" label="Preferred DC" type="select" value={formData.preferred_dc_id} onChange={handleFieldChange} options={dcOptions} />
+                                </div>
+                                
+                                <div className="form-row">
+                                    <FormInput name="tank_size" label="Tank Size (gallons)" type="number" value={formData.tank_size} onChange={handleFieldChange} />
+                                    <FormInput name="current_level" label="Current Level (%)" type="number" step="0.01" value={formData.current_level} onChange={handleFieldChange} />
+                                </div>
+                                
+                                <div className="form-row">
+                                    <FormInput name="price_per_gallon" label="Price per Gallon ($)" type="number" step="0.01" value={formData.price_per_gallon} onChange={handleFieldChange} />
+                                    <FormInput name="payment_terms" label="Payment Terms" type="select" value={formData.payment_terms} onChange={handleFieldChange} options={[
+                                        { value: 'net30', label: 'Net 30' },
+                                        { value: 'net15', label: 'Net 15' },
+                                        { value: 'due_on_delivery', label: 'Due on Delivery' },
+                                        { value: 'prepaid', label: 'Prepaid' }
+                                    ]} />
+                                </div>
+                                
+                                <FormInput name="delivery_instructions" label="Delivery Instructions" type="textarea" value={formData.delivery_instructions} onChange={handleFieldChange} />
+                                
+                                <div className="form-row">
+                                    <FormInput name="auto_delivery" label="Auto-Delivery Enabled" type="checkbox" value={formData.auto_delivery} onChange={handleFieldChange} />
+                                    <FormInput name="minimum_level" label="Auto-Order Below (%)" type="number" value={formData.minimum_level} onChange={handleFieldChange} />
+                                </div>
+                                
+                                <FormInput name="status" label="Status" type="select" value={formData.status} onChange={handleFieldChange} options={[
+                                    { value: 'active', label: 'Active' },
+                                    { value: 'inactive', label: 'Inactive' }
+                                ]} />
+                            </div>
+                            <div className="modal-footer">
+                                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+                                <button type="submit" className="btn btn-primary" disabled={loading}>{loading ? 'Saving...' : 'Save'}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
             );
         }
 
@@ -1008,6 +1523,9 @@
             const [scheduledDate, setScheduledDate] = useState(new Date().toISOString().split('T')[0]);
             const mapRef = useRef(null);
             const mapInstance = useRef(null);
+            const markersRef = useRef([]);
+            const polylineRef = useRef(null);
+            const directionsRendererRef = useRef(null);
 
             // Get pending orders
             const pendingOrders = (data?.orders || []).filter(o => o.status === 'pending' && !o.route_id);
@@ -1016,13 +1534,56 @@
             useEffect(() => {
                 if (!mapRef.current || mapInstance.current) return;
 
-                const map = L.map(mapRef.current).setView([39.8283, -98.5795], 4);
-                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                    attribution: '©OpenStreetMap, ©CartoDB'
-                }).addTo(map);
+                // Find company headquarters (first DC or primary DC)
+                const headquarters = (data?.distributionCenters || []).find(dc => dc.is_headquarters || dc.is_primary) 
+                    || (data?.distributionCenters || [])[0];
+                
+                const hqLat = headquarters?.lat ? parseFloat(headquarters.lat) : 39.8283;
+                const hqLng = headquarters?.lng ? parseFloat(headquarters.lng) : -98.5795;
+                const hasHQ = headquarters?.lat && headquarters?.lng;
+
+                const map = new google.maps.Map(mapRef.current, {
+                    center: { lat: hqLat, lng: hqLng },
+                    zoom: hasHQ ? 8 : 4,
+                    mapTypeControl: true,
+                    streetViewControl: true,
+                    fullscreenControl: true
+                });
                 mapInstance.current = map;
 
-                return () => { map.remove(); mapInstance.current = null; };
+                // Add 500 mile radius circle around HQ
+                if (hasHQ) {
+                    const radiusInMeters = 500 * 1609.34; // 500 miles to meters
+                    const serviceCircle = new google.maps.Circle({
+                        map: map,
+                        center: { lat: hqLat, lng: hqLng },
+                        radius: radiusInMeters,
+                        fillColor: '#6366F1',
+                        fillOpacity: 0.08,
+                        strokeColor: '#6366F1',
+                        strokeOpacity: 0.4,
+                        strokeWeight: 2
+                    });
+                    map.fitBounds(serviceCircle.getBounds());
+                }
+
+                // Initialize directions renderer for route display
+                directionsRendererRef.current = new google.maps.DirectionsRenderer({
+                    map: map,
+                    suppressMarkers: true, // We'll add our own numbered markers
+                    polylineOptions: {
+                        strokeColor: '#6366F1',
+                        strokeWeight: 4,
+                        strokeOpacity: 0.8
+                    }
+                });
+
+                return () => {
+                    markersRef.current.forEach(m => m.setMap(null));
+                    markersRef.current = [];
+                    if (directionsRendererRef.current) directionsRendererRef.current.setMap(null);
+                    mapInstance.current = null;
+                };
             }, []);
 
             // Update map when optimized route changes
@@ -1030,80 +1591,160 @@
                 if (!mapInstance.current) return;
                 const map = mapInstance.current;
 
-                // Clear existing layers
-                map.eachLayer(layer => {
-                    if (layer instanceof L.Marker || layer instanceof L.Polyline) {
-                        map.removeLayer(layer);
-                    }
-                });
+                // Clear existing markers
+                markersRef.current.forEach(m => m.setMap(null));
+                markersRef.current = [];
+                if (polylineRef.current) {
+                    polylineRef.current.setMap(null);
+                    polylineRef.current = null;
+                }
+                if (directionsRendererRef.current) {
+                    directionsRendererRef.current.setDirections({ routes: [] });
+                }
 
                 if (optimizedRoute) {
-                    const bounds = [];
+                    const bounds = new google.maps.LatLngBounds();
 
                     // Add depot marker
                     const depot = optimizedRoute.depot;
-                    const depotIcon = L.divIcon({ 
-                        className: '', 
-                        html: '<div style="font-size:28px;filter:drop-shadow(2px 2px 2px rgba(0,0,0,0.5))">🏭</div>', 
-                        iconSize: [32, 32], 
-                        iconAnchor: [16, 16] 
+                    const depotMarker = new google.maps.Marker({
+                        position: { lat: depot.lat, lng: depot.lng },
+                        map: map,
+                        title: depot.name,
+                        icon: {
+                            url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="#6366F1"><path d="M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6.9 3.45L12 11.09 5.1 7.63 12 4.18zM4 8.72l7 3.5v7.06l-7-3.5V8.72zm9 10.56V12.22l7-3.5v7.06l-7 3.5z"/></svg>'),
+                            scaledSize: new google.maps.Size(32, 32),
+                            anchor: new google.maps.Point(16, 16)
+                        }
                     });
-                    L.marker([depot.lat, depot.lng], { icon: depotIcon })
-                        .addTo(map)
-                        .bindPopup(`<b>🏭 ${depot.name}</b><br/>Start/End Point`);
-                    bounds.push([depot.lat, depot.lng]);
+                    const depotInfo = new google.maps.InfoWindow({
+                        content: `<div style="color:#333"><b>🏭 ${depot.name}</b><br/>Start/End Point</div>`
+                    });
+                    depotMarker.addListener('click', () => depotInfo.open(map, depotMarker));
+                    markersRef.current.push(depotMarker);
+                    bounds.extend(depotMarker.getPosition());
 
                     // Add stop markers with numbers
                     optimizedRoute.stops.forEach((stop, idx) => {
-                        const stopIcon = L.divIcon({
-                            className: '',
-                            html: `<div style="background:var(--primary);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:14px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3)">${idx + 1}</div>`,
-                            iconSize: [28, 28],
-                            iconAnchor: [14, 14]
+                        const marker = new google.maps.Marker({
+                            position: { lat: stop.lat, lng: stop.lng },
+                            map: map,
+                            title: stop.name,
+                            label: {
+                                text: String(idx + 1),
+                                color: 'white',
+                                fontWeight: 'bold',
+                                fontSize: '12px'
+                            },
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: 14,
+                                fillColor: '#6366F1',
+                                fillOpacity: 1,
+                                strokeColor: '#ffffff',
+                                strokeWeight: 2
+                            }
                         });
-                        L.marker([stop.lat, stop.lng], { icon: stopIcon })
-                            .addTo(map)
-                            .bindPopup(`<b>Stop ${idx + 1}: ${stop.name}</b><br/>${stop.address || ''}<br/>${stop.city}, ${stop.state}<br/>Gallons: ${stop.gallons || '-'}`);
-                        bounds.push([stop.lat, stop.lng]);
+                        const infoWindow = new google.maps.InfoWindow({
+                            content: `<div style="color:#333"><b>Stop ${idx + 1}: ${stop.name}</b><br/>${stop.address || ''}<br/>${stop.city}, ${stop.state}<br/>Gallons: ${stop.gallons || '-'}</div>`
+                        });
+                        marker.addListener('click', () => infoWindow.open(map, marker));
+                        markersRef.current.push(marker);
+                        bounds.extend(marker.getPosition());
                     });
 
-                    // Draw route line
-                    const routeCoords = [
-                        [depot.lat, depot.lng],
-                        ...optimizedRoute.stops.map(s => [s.lat, s.lng]),
-                        [depot.lat, depot.lng]
-                    ];
-                    L.polyline(routeCoords, { 
-                        color: '#6366F1', 
-                        weight: 4, 
-                        opacity: 0.8,
-                        dashArray: '10, 10'
-                    }).addTo(map);
-
-                    if (bounds.length > 0) {
-                        map.fitBounds(bounds, { padding: [50, 50] });
+                    // Draw route using Directions API for real roads
+                    if (optimizedRoute.stops.length > 0) {
+                        const directionsService = new google.maps.DirectionsService();
+                        const waypoints = optimizedRoute.stops.slice(0, -1).map(stop => ({
+                            location: { lat: stop.lat, lng: stop.lng },
+                            stopover: true
+                        }));
+                        
+                        const lastStop = optimizedRoute.stops[optimizedRoute.stops.length - 1];
+                        
+                        directionsService.route({
+                            origin: { lat: depot.lat, lng: depot.lng },
+                            destination: { lat: depot.lat, lng: depot.lng }, // Return to depot
+                            waypoints: optimizedRoute.stops.map(stop => ({
+                                location: { lat: stop.lat, lng: stop.lng },
+                                stopover: true
+                            })),
+                            optimizeWaypoints: false, // We already optimized
+                            travelMode: google.maps.TravelMode.DRIVING
+                        }, (result, status) => {
+                            if (status === 'OK') {
+                                directionsRendererRef.current.setDirections(result);
+                            } else {
+                                // Fallback to simple polyline if directions fail
+                                const routeCoords = [
+                                    { lat: depot.lat, lng: depot.lng },
+                                    ...optimizedRoute.stops.map(s => ({ lat: s.lat, lng: s.lng })),
+                                    { lat: depot.lat, lng: depot.lng }
+                                ];
+                                polylineRef.current = new google.maps.Polyline({
+                                    path: routeCoords,
+                                    strokeColor: '#6366F1',
+                                    strokeWeight: 4,
+                                    strokeOpacity: 0.8,
+                                    map: map
+                                });
+                            }
+                        });
                     }
+
+                    map.fitBounds(bounds);
                 } else if (selectedDC) {
                     // Show DC and selected orders on map
                     const dc = data?.distributionCenters?.find(d => d.id === selectedDC);
                     if (dc?.lat && dc?.lng) {
-                        const depotIcon = L.divIcon({ className: '', html: '<div style="font-size:28px">🏭</div>', iconSize: [32, 32], iconAnchor: [16, 16] });
-                        L.marker([parseFloat(dc.lat), parseFloat(dc.lng)], { icon: depotIcon }).addTo(map).bindPopup(`<b>🏭 ${dc.name}</b>`);
+                        const bounds = new google.maps.LatLngBounds();
                         
-                        const bounds = [[parseFloat(dc.lat), parseFloat(dc.lng)]];
-                        
+                        const depotMarker = new google.maps.Marker({
+                            position: { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) },
+                            map: map,
+                            title: dc.name,
+                            icon: {
+                                url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="#6366F1"><path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/></svg>'),
+                                scaledSize: new google.maps.Size(32, 32),
+                                anchor: new google.maps.Point(16, 16)
+                            }
+                        });
+                        const depotInfo = new google.maps.InfoWindow({
+                            content: `<div style="color:#333"><b>🏭 ${dc.name}</b></div>`
+                        });
+                        depotMarker.addListener('click', () => depotInfo.open(map, depotMarker));
+                        markersRef.current.push(depotMarker);
+                        bounds.extend(depotMarker.getPosition());
+
                         // Show selected orders
                         selectedOrders.forEach(orderId => {
                             const order = pendingOrders.find(o => o.id === orderId);
                             if (order?.lat && order?.lng) {
-                                const icon = L.divIcon({ className: '', html: '<div style="font-size:20px">📦</div>', iconSize: [24, 24], iconAnchor: [12, 12] });
-                                L.marker([parseFloat(order.lat), parseFloat(order.lng)], { icon }).addTo(map).bindPopup(`<b>${order.customer_name}</b><br/>${order.gallons_requested} gal`);
-                                bounds.push([parseFloat(order.lat), parseFloat(order.lng)]);
+                                const marker = new google.maps.Marker({
+                                    position: { lat: parseFloat(order.lat), lng: parseFloat(order.lng) },
+                                    map: map,
+                                    title: order.customer_name,
+                                    icon: {
+                                        path: google.maps.SymbolPath.CIRCLE,
+                                        scale: 10,
+                                        fillColor: '#F59E0B',
+                                        fillOpacity: 1,
+                                        strokeColor: '#ffffff',
+                                        strokeWeight: 2
+                                    }
+                                });
+                                const infoWindow = new google.maps.InfoWindow({
+                                    content: `<div style="color:#333"><b>${order.customer_name}</b><br/>${order.gallons_requested} gal</div>`
+                                });
+                                marker.addListener('click', () => infoWindow.open(map, marker));
+                                markersRef.current.push(marker);
+                                bounds.extend(marker.getPosition());
                             }
                         });
 
-                        if (bounds.length > 0) {
-                            map.fitBounds(bounds, { padding: [50, 50] });
+                        if (markersRef.current.length > 0) {
+                            map.fitBounds(bounds);
                         }
                     }
                 }
@@ -1757,41 +2398,30 @@
                         </table>
                     </div>
                     {showModal && (
-                        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && (() => { setShowModal(false); setEditItem(null); })()}>
-                            <div className="modal" style={{maxWidth:'800px'}}>
-                                <div className="modal-header">
-                                    <h3>{editItem ? 'Edit Truck' : 'Add Truck'}</h3>
-                                    <button className="modal-close" onClick={() => { setShowModal(false); setEditItem(null); }}>&times;</button>
-                                </div>
-                                <div style={{padding:'0 1rem',borderBottom:'1px solid var(--border)',display:'flex',gap:'0.25rem',overflowX:'auto'}}>
-                                    {tabs.map(tab => (
-                                        <button key={tab.id} className={`btn btn-sm ${activeTab === tab.id ? 'btn-primary' : 'btn-secondary'}`} style={{borderRadius:'8px 8px 0 0',whiteSpace:'nowrap'}} onClick={() => setActiveTab(tab.id)}>
-                                            {tab.label}
-                                        </button>
-                                    ))}
-                                </div>
-                                <EntityModalContent
-                                    fields={getFieldsForTab()}
-                                    data={editItem || { status: 'active', capacity_gallons: 3000, mpg: 8, product_weight_per_gallon: 4.2, diesel_weight_per_gallon: 7.1, fuel_type: 'diesel', has_gps_tracker: true, has_eld: true }}
-                                    onSave={handleSave}
-                                    onClose={() => { setShowModal(false); setEditItem(null); }}
-                                    loading={loading}
-                                />
-                            </div>
-                        </div>
+                        <TruckFormModal
+                            editItem={editItem}
+                            activeTab={activeTab}
+                            setActiveTab={setActiveTab}
+                            tabs={tabs}
+                            getFieldsForTab={getFieldsForTab}
+                            onSave={handleSave}
+                            onClose={() => { setShowModal(false); setEditItem(null); }}
+                            loading={loading}
+                        />
                     )}
                 </>
             );
         }
 
-        // Extracted modal content for reuse with tabs
-        function EntityModalContent({ fields, data, onSave, onClose, loading }) {
-            const [formData, setFormData] = useState(data || {});
+        // Truck Form Modal with stable state management
+        function TruckFormModal({ editItem, activeTab, setActiveTab, tabs, getFieldsForTab, onSave, onClose, loading }) {
+            const defaultData = { status: 'active', capacity_gallons: 3000, mpg: 8, product_weight_per_gallon: 4.2, diesel_weight_per_gallon: 7.1, fuel_type: 'diesel', has_gps_tracker: true, has_eld: true };
+            const [formData, setFormData] = useState(() => editItem ? { ...editItem } : { ...defaultData });
             const [error, setError] = useState('');
 
-            useEffect(() => {
-                setFormData(prev => ({ ...prev, ...data }));
-            }, [data]);
+            const handleFieldChange = (name, value) => {
+                setFormData(prev => ({ ...prev, [name]: value }));
+            };
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
@@ -1803,69 +2433,61 @@
                 }
             };
 
-            const updateField = (name, value) => setFormData(prev => ({ ...prev, [name]: value }));
-
-            const renderField = (field) => {
-                if (field.type === 'row') {
-                    return <div key={field.key || Math.random()} className="form-row">{field.fields.map(f => renderField(f))}</div>;
-                }
-                if (field.type === 'row3') {
-                    return <div key={field.key || Math.random()} className="form-row-3">{field.fields.map(f => renderField(f))}</div>;
-                }
-
-                const value = formData[field.name] ?? '';
-
-                if (field.type === 'select') {
-                    return (
-                        <div className="form-group" key={field.name}>
-                            <label className="form-label">{field.label}{field.required && ' *'}</label>
-                            <select className="form-input" value={value} onChange={(e) => updateField(field.name, e.target.value)} required={field.required}>
-                                <option value="">Select...</option>
-                                {(field.options || []).map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                            </select>
-                        </div>
-                    );
-                }
-                if (field.type === 'textarea') {
-                    return (
-                        <div className="form-group" key={field.name}>
-                            <label className="form-label">{field.label}</label>
-                            <textarea className="form-input" rows="3" value={value} onChange={(e) => updateField(field.name, e.target.value)}></textarea>
-                        </div>
-                    );
-                }
-                if (field.type === 'checkbox') {
-                    return (
-                        <div className="form-group" key={field.name}>
-                            <label style={{display:'flex',alignItems:'center',gap:'0.5rem',cursor:'pointer'}}>
-                                <input type="checkbox" checked={!!formData[field.name]} onChange={(e) => updateField(field.name, e.target.checked)} style={{width:'18px',height:'18px'}} />
-                                {field.label}
-                            </label>
-                        </div>
-                    );
-                }
-
-                return (
-                    <div className="form-group" key={field.name}>
-                        <label className="form-label">{field.label}{field.required && ' *'}</label>
-                        <input type={field.type || 'text'} className="form-input" value={value} onChange={(e) => updateField(field.name, field.type === 'number' ? (e.target.value === '' ? '' : parseFloat(e.target.value)) : e.target.value)} required={field.required} step={field.step} placeholder={field.placeholder} />
-                    </div>
-                );
+            const renderFields = () => {
+                const fields = getFieldsForTab();
+                return fields.map((field, index) => {
+                    if (field.type === 'row') {
+                        return (
+                            <div key={`row-${index}`} className="form-row">
+                                {field.fields.map(f => (
+                                    <FormInput key={f.name} name={f.name} label={f.label} type={f.type} value={formData[f.name]} onChange={handleFieldChange} required={f.required} placeholder={f.placeholder} step={f.step} options={f.options} />
+                                ))}
+                            </div>
+                        );
+                    }
+                    if (field.type === 'row3') {
+                        return (
+                            <div key={`row3-${index}`} className="form-row-3">
+                                {field.fields.map(f => (
+                                    <FormInput key={f.name} name={f.name} label={f.label} type={f.type} value={formData[f.name]} onChange={handleFieldChange} required={f.required} placeholder={f.placeholder} step={f.step} options={f.options} />
+                                ))}
+                            </div>
+                        );
+                    }
+                    return <FormInput key={field.name} name={field.name} label={field.label} type={field.type} value={formData[field.name]} onChange={handleFieldChange} required={field.required} placeholder={field.placeholder} step={field.step} options={field.options} />;
+                });
             };
 
             return (
-                <form onSubmit={handleSubmit}>
-                    <div className="modal-body">
-                        {error && <div className="error-message">{error}</div>}
-                        {fields.map(field => renderField(field))}
+                <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+                    <div className="modal" style={{maxWidth:'1100px',width:'95%',display:'flex',flexDirection:'column',maxHeight:'90vh'}}>
+                        <div className="modal-header" style={{flexShrink:0}}>
+                            <h3>{editItem ? 'Edit Truck' : 'Add Truck'}</h3>
+                            <button className="modal-close" onClick={onClose}>&times;</button>
+                        </div>
+                        <div style={{padding:'0 1rem',borderBottom:'1px solid var(--border)',display:'flex',gap:'0.25rem',flexWrap:'nowrap',flexShrink:0}}>
+                            {tabs.map(tab => (
+                                <button key={tab.id} className={`btn btn-sm ${activeTab === tab.id ? 'btn-primary' : 'btn-secondary'}`} style={{borderRadius:'8px 8px 0 0',whiteSpace:'nowrap',fontSize:'0.8rem',padding:'0.5rem 0.75rem'}} onClick={() => setActiveTab(tab.id)}>
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
+                        <form onSubmit={handleSubmit} style={{display:'flex',flexDirection:'column',flex:1,overflow:'hidden'}}>
+                            <div className="modal-body" style={{flex:1,overflowY:'auto',minHeight:'400px'}}>
+                                {error && <div className="error-message">{error}</div>}
+                                {renderFields()}
+                            </div>
+                            <div className="modal-footer" style={{flexShrink:0}}>
+                                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+                                <button type="submit" className="btn btn-primary" disabled={loading}>{loading ? 'Saving...' : 'Save'}</button>
+                            </div>
+                        </form>
                     </div>
-                    <div className="modal-footer">
-                        <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-                        <button type="submit" className="btn btn-primary" disabled={loading}>{loading ? 'Saving...' : 'Save'}</button>
-                    </div>
-                </form>
+                </div>
             );
         }
+
+        // Removed old EntityModalContent - now using TruckFormModal and DriverFormModal
 
         // =====================================================
         // DRIVERS VIEW - Comprehensive Profiles
@@ -2224,30 +2846,92 @@
                         </table>
                     </div>
                     {showModal && (
-                        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && (() => { setShowModal(false); setEditItem(null); })()}>
-                            <div className="modal" style={{maxWidth:'800px'}}>
-                                <div className="modal-header">
-                                    <h3>{editItem ? 'Edit Driver' : 'Add Driver'}</h3>
-                                    <button className="modal-close" onClick={() => { setShowModal(false); setEditItem(null); }}>&times;</button>
-                                </div>
-                                <div style={{padding:'0 1rem',borderBottom:'1px solid var(--border)',display:'flex',gap:'0.25rem',overflowX:'auto'}}>
-                                    {tabs.map(tab => (
-                                        <button key={tab.id} className={`btn btn-sm ${activeTab === tab.id ? 'btn-primary' : 'btn-secondary'}`} style={{borderRadius:'8px 8px 0 0',whiteSpace:'nowrap'}} onClick={() => setActiveTab(tab.id)}>
-                                            {tab.label}
-                                        </button>
-                                    ))}
-                                </div>
-                                <EntityModalContent
-                                    fields={getFieldsForTab()}
-                                    data={editItem || { status: 'active', pay_type: 'hourly', hourly_rate: 25, background_check_status: 'pending', drug_test_status: 'pending', mvr_status: 'pending' }}
-                                    onSave={handleSave}
-                                    onClose={() => { setShowModal(false); setEditItem(null); }}
-                                    loading={loading}
-                                />
-                            </div>
-                        </div>
+                        <DriverFormModal
+                            editItem={editItem}
+                            activeTab={activeTab}
+                            setActiveTab={setActiveTab}
+                            tabs={tabs}
+                            getFieldsForTab={getFieldsForTab}
+                            onSave={handleSave}
+                            onClose={() => { setShowModal(false); setEditItem(null); }}
+                            loading={loading}
+                        />
                     )}
                 </>
+            );
+        }
+
+        // Driver Form Modal with stable state management
+        function DriverFormModal({ editItem, activeTab, setActiveTab, tabs, getFieldsForTab, onSave, onClose, loading }) {
+            const defaultData = { status: 'active', pay_type: 'hourly', hourly_rate: 25, background_check_status: 'pending', drug_test_status: 'pending', mvr_status: 'pending' };
+            const [formData, setFormData] = useState(() => editItem ? { ...editItem } : { ...defaultData });
+            const [error, setError] = useState('');
+
+            const handleFieldChange = (name, value) => {
+                setFormData(prev => ({ ...prev, [name]: value }));
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                try {
+                    await onSave(formData);
+                } catch (err) {
+                    setError(err.message);
+                }
+            };
+
+            const renderFields = () => {
+                const fields = getFieldsForTab();
+                return fields.map((field, index) => {
+                    if (field.type === 'row') {
+                        return (
+                            <div key={`row-${index}`} className="form-row">
+                                {field.fields.map(f => (
+                                    <FormInput key={f.name} name={f.name} label={f.label} type={f.type} value={formData[f.name]} onChange={handleFieldChange} required={f.required} placeholder={f.placeholder} step={f.step} options={f.options} />
+                                ))}
+                            </div>
+                        );
+                    }
+                    if (field.type === 'row3') {
+                        return (
+                            <div key={`row3-${index}`} className="form-row-3">
+                                {field.fields.map(f => (
+                                    <FormInput key={f.name} name={f.name} label={f.label} type={f.type} value={formData[f.name]} onChange={handleFieldChange} required={f.required} placeholder={f.placeholder} step={f.step} options={f.options} />
+                                ))}
+                            </div>
+                        );
+                    }
+                    return <FormInput key={field.name} name={field.name} label={field.label} type={field.type} value={formData[field.name]} onChange={handleFieldChange} required={field.required} placeholder={field.placeholder} step={field.step} options={field.options} />;
+                });
+            };
+
+            return (
+                <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+                    <div className="modal" style={{maxWidth:'1100px',width:'95%',display:'flex',flexDirection:'column',maxHeight:'90vh'}}>
+                        <div className="modal-header" style={{flexShrink:0}}>
+                            <h3>{editItem ? 'Edit Driver' : 'Add Driver'}</h3>
+                            <button className="modal-close" onClick={onClose}>&times;</button>
+                        </div>
+                        <div style={{padding:'0 1rem',borderBottom:'1px solid var(--border)',display:'flex',gap:'0.25rem',flexWrap:'nowrap',flexShrink:0}}>
+                            {tabs.map(tab => (
+                                <button key={tab.id} className={`btn btn-sm ${activeTab === tab.id ? 'btn-primary' : 'btn-secondary'}`} style={{borderRadius:'8px 8px 0 0',whiteSpace:'nowrap',fontSize:'0.8rem',padding:'0.5rem 0.75rem'}} onClick={() => setActiveTab(tab.id)}>
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
+                        <form onSubmit={handleSubmit} style={{display:'flex',flexDirection:'column',flex:1,overflow:'hidden'}}>
+                            <div className="modal-body" style={{flex:1,overflowY:'auto',minHeight:'400px'}}>
+                                {error && <div className="error-message">{error}</div>}
+                                {renderFields()}
+                            </div>
+                            <div className="modal-footer" style={{flexShrink:0}}>
+                                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+                                <button type="submit" className="btn btn-primary" disabled={loading}>{loading ? 'Saving...' : 'Save'}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
             );
         }
 
@@ -2940,7 +3624,8 @@
 
             useEffect(() => {
                 api.setTenant(tenant);
-                const token = localStorage.getItem('authToken');
+                // Check both 'token' (from portal login) and 'authToken' (from app login)
+                const token = localStorage.getItem('token') || localStorage.getItem('authToken');
                 const savedUser = localStorage.getItem('user');
                 const savedCompany = localStorage.getItem('company');
                 
@@ -2962,6 +3647,8 @@
             }, []);
 
             const clearAuth = () => {
+                // Clear both token keys for complete logout
+                localStorage.removeItem('token');
                 localStorage.removeItem('authToken');
                 localStorage.removeItem('user');
                 localStorage.removeItem('company');
