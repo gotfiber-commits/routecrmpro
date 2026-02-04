@@ -213,65 +213,120 @@ async function handleTrucks(method, path, companyId, user, event) {
             return error('Access denied', 403);
         }
         const body = parseBody(event);
+        
+        // Helper to parse integers safely
+        const toInt = (v) => v ? parseInt(v, 10) || null : null;
+        const toFloat = (v) => v ? parseFloat(v) || null : null;
+        
+        // Start with base columns that always exist
+        let columns = [
+            'company_id', 'dc_id', 'code', 'name', 'make', 'model', 'year', 'vin', 'license_plate',
+            'capacity_gallons', 'mpg', 'current_lat', 'current_lng', 'status'
+        ];
+        let values = [
+            companyId, body.dc_id || null, body.code, body.name, body.make, body.model, toInt(body.year), body.vin, body.license_plate,
+            toInt(body.capacity_gallons) || 3000, toFloat(body.mpg) || 8, toFloat(body.current_lat), toFloat(body.current_lng), body.status || 'active'
+        ];
+
+        // Try to add enhanced columns if they exist (from enhanced-profiles.sql)
+        const enhancedColumns = {
+            'assigned_driver_id': body.assigned_driver_id || null,
+            'empty_weight': toInt(body.empty_weight),
+            'gvwr': toInt(body.gvwr),
+            'gcwr': toInt(body.gcwr),
+            'max_payload': toInt(body.max_payload),
+            'front_axle_weight': toInt(body.front_axle_weight),
+            'rear_axle_weight': toInt(body.rear_axle_weight),
+            'axle_configuration': body.axle_configuration || null,
+            'tank_capacity_gallons': toInt(body.tank_capacity_gallons),
+            'tank_material': body.tank_material || null,
+            'tank_last_inspection': body.tank_last_inspection || null,
+            'tank_next_inspection': body.tank_next_inspection || null,
+            'tank_certification': body.tank_certification || null,
+            'tank_manufacturer': body.tank_manufacturer || null,
+            'tank_serial_number': body.tank_serial_number || null,
+            'tank_manufacture_date': body.tank_manufacture_date || null,
+            'working_pressure_psi': toInt(body.working_pressure_psi),
+            'product_type': body.product_type || 'propane',
+            'product_weight_per_gallon': toFloat(body.product_weight_per_gallon) || 4.2,
+            'fuel_tank_capacity': toInt(body.fuel_tank_capacity),
+            'fuel_type': body.fuel_type || 'diesel',
+            'diesel_weight_per_gallon': toFloat(body.diesel_weight_per_gallon) || 7.1,
+            'avg_mpg': toFloat(body.avg_mpg),
+            'cost_per_mile': toFloat(body.cost_per_mile),
+            'def_tank_capacity': toInt(body.def_tank_capacity),
+            'has_pump': body.has_pump !== false,
+            'pump_type': body.pump_type || null,
+            'meter_type': body.meter_type || null,
+            'meter_serial_number': body.meter_serial_number || null,
+            'meter_last_calibration': body.meter_last_calibration || null,
+            'meter_next_calibration': body.meter_next_calibration || null,
+            'dot_number': body.dot_number || null,
+            'mc_number': body.mc_number || null,
+            'registration_number': body.registration_number || null,
+            'registration_state': body.registration_state || null,
+            'registration_expiration': body.registration_expiration || body.registration_expiry || null,
+            'last_dot_inspection': body.last_dot_inspection || null,
+            'next_dot_inspection': body.next_dot_inspection || null,
+            'dot_inspection_status': body.dot_inspection_status || null,
+            'inspection_decal_number': body.inspection_decal_number || null,
+            'ifta_account': body.ifta_account || null,
+            'irp_account': body.irp_account || null,
+            'insurance_policy_number': body.insurance_policy_number || null,
+            'insurance_provider': body.insurance_provider || null,
+            'insurance_expiration': body.insurance_expiration || null,
+            'liability_coverage': toFloat(body.liability_coverage),
+            'cargo_coverage': toFloat(body.cargo_coverage),
+            'last_oil_change': body.last_oil_change || null,
+            'last_oil_change_miles': toInt(body.last_oil_change_miles),
+            'next_oil_change_miles': toInt(body.next_oil_change_miles),
+            'oil_change_interval_miles': toInt(body.oil_change_interval_miles) || 15000,
+            'last_service_date': body.last_service_date || null,
+            'last_service_mileage': toInt(body.last_service_mileage),
+            'next_service_date': body.next_service_date || null,
+            'next_service_mileage': toInt(body.next_service_mileage),
+            'current_odometer': toInt(body.current_odometer) || toInt(body.odometer),
+            'total_hours': toInt(body.total_hours),
+            'tire_size': body.tire_size || null,
+            'tire_type': body.tire_type || null,
+            'tire_last_replaced': body.tire_last_replaced || null,
+            'telematics_device_id': body.telematics_device_id || null,
+            'telematics_provider': body.telematics_provider || null,
+            'has_lift_gate': body.has_lift_gate || false,
+            'has_pto_pump': body.has_pto_pump || false,
+            'has_gps_tracker': body.has_gps_tracker !== false,
+            'has_dash_cam': body.has_dash_cam || false,
+            'has_eld': body.has_eld !== false,
+            'eld_provider': body.eld_provider || null,
+            'eld_serial_number': body.eld_serial_number || null,
+            'purchase_date': body.purchase_date || null,
+            'purchase_price': toFloat(body.purchase_price),
+            'current_value': toFloat(body.current_value),
+            'monthly_payment': toFloat(body.monthly_payment),
+            'monthly_insurance': toFloat(body.monthly_insurance),
+            'notes': body.notes || null
+        };
+
+        // Check which enhanced columns exist and add them
+        try {
+            const colCheck = await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'trucks' AND table_schema = 'public'`);
+            const existingCols = colCheck.rows.map(r => r.column_name);
+            
+            for (const [col, val] of Object.entries(enhancedColumns)) {
+                if (existingCols.includes(col)) {
+                    columns.push(col);
+                    values.push(val);
+                }
+            }
+        } catch (e) {
+            // If column check fails, just use base columns
+            console.log('Enhanced columns check failed, using base columns only');
+        }
+
+        const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
         const result = await query(
-            `INSERT INTO trucks (
-                company_id, dc_id, assigned_driver_id, code, name, make, model, year, vin, license_plate,
-                capacity_gallons, mpg, current_lat, current_lng, status,
-                empty_weight, gvwr, gcwr, max_payload, front_axle_weight, rear_axle_weight, axle_configuration,
-                tank_capacity_gallons, tank_material, tank_last_inspection, tank_next_inspection, tank_certification,
-                tank_manufacturer, tank_serial_number, tank_manufacture_date, working_pressure_psi,
-                product_type, product_weight_per_gallon,
-                fuel_tank_capacity, fuel_type, diesel_weight_per_gallon, avg_mpg, cost_per_mile, def_tank_capacity,
-                has_pump, pump_type, meter_type, meter_serial_number, meter_last_calibration, meter_next_calibration,
-                dot_number, mc_number, registration_number, registration_state, registration_expiration, 
-                last_dot_inspection, next_dot_inspection, dot_inspection_status, inspection_decal_number,
-                ifta_account, irp_account,
-                insurance_policy_number, insurance_provider, insurance_expiration, liability_coverage, cargo_coverage,
-                last_oil_change, last_oil_change_miles, next_oil_change_miles, oil_change_interval_miles,
-                last_service_date, last_service_mileage, next_service_date, next_service_mileage,
-                current_odometer, total_hours, tire_size, tire_last_replaced,
-                telematics_device_id, telematics_provider,
-                has_lift_gate, has_pto_pump, has_gps_tracker, has_dash_cam, has_eld, eld_provider, eld_serial_number,
-                purchase_date, purchase_price, current_value, monthly_payment, monthly_insurance, notes
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                $11, $12, $13, $14, $15,
-                $16, $17, $18, $19, $20, $21, $22,
-                $23, $24, $25, $26, $27,
-                $28, $29, $30, $31,
-                $32, $33,
-                $34, $35, $36, $37, $38, $39,
-                $40, $41, $42, $43, $44, $45,
-                $46, $47, $48, $49, $50, $51, $52, $53, $54,
-                $55, $56,
-                $57, $58, $59, $60, $61,
-                $62, $63, $64, $65,
-                $66, $67, $68, $69,
-                $70, $71, $72, $73,
-                $74, $75,
-                $76, $77, $78, $79, $80, $81, $82,
-                $83, $84, $85, $86, $87, $88
-            ) RETURNING *`,
-            [
-                companyId, body.dc_id, body.assigned_driver_id, body.code, body.name, body.make, body.model, body.year, body.vin, body.license_plate,
-                body.capacity_gallons || 3000, body.mpg || 8, body.current_lat, body.current_lng, body.status || 'active',
-                body.empty_weight, body.gvwr, body.gcwr, body.max_payload, body.front_axle_weight, body.rear_axle_weight, body.axle_configuration,
-                body.tank_capacity_gallons, body.tank_material, body.tank_last_inspection, body.tank_next_inspection, body.tank_certification,
-                body.tank_manufacturer, body.tank_serial_number, body.tank_manufacture_date, body.working_pressure_psi,
-                body.product_type || 'propane', body.product_weight_per_gallon || 4.2,
-                body.fuel_tank_capacity, body.fuel_type || 'diesel', body.diesel_weight_per_gallon || 7.1, body.avg_mpg || 8, body.cost_per_mile, body.def_tank_capacity,
-                body.has_pump !== false, body.pump_type, body.meter_type, body.meter_serial_number, body.meter_last_calibration, body.meter_next_calibration,
-                body.dot_number, body.mc_number, body.registration_number, body.registration_state, body.registration_expiration || body.registration_expiry,
-                body.last_dot_inspection, body.next_dot_inspection, body.dot_inspection_status, body.inspection_decal_number,
-                body.ifta_account, body.irp_account,
-                body.insurance_policy_number, body.insurance_provider, body.insurance_expiration, body.liability_coverage, body.cargo_coverage,
-                body.last_oil_change, body.last_oil_change_miles, body.next_oil_change_miles, body.oil_change_interval_miles || 15000,
-                body.last_service_date, body.last_service_mileage, body.next_service_date, body.next_service_mileage,
-                body.current_odometer || body.odometer, body.total_hours, body.tire_size, body.tire_last_replaced,
-                body.telematics_device_id, body.telematics_provider,
-                body.has_lift_gate || false, body.has_pto_pump || false, body.has_gps_tracker !== false, body.has_dash_cam || false, body.has_eld !== false, body.eld_provider, body.eld_serial_number,
-                body.purchase_date, body.purchase_price, body.current_value, body.monthly_payment, body.monthly_insurance, body.notes
-            ]
+            `INSERT INTO trucks (${columns.join(', ')}) VALUES (${placeholders}) RETURNING *`,
+            values
         );
         return success(result.rows[0], 201);
     }
@@ -282,48 +337,134 @@ async function handleTrucks(method, path, companyId, user, event) {
         }
         const id = subPath.slice(1);
         const body = parseBody(event);
+        
+        // Start with base columns that always exist
+        let updates = [];
+        let values = [];
+        let paramIndex = 1;
+
+        const baseFields = {
+            'dc_id': body.dc_id || null,
+            'name': body.name,
+            'make': body.make,
+            'model': body.model,
+            'year': body.year,
+            'vin': body.vin,
+            'license_plate': body.license_plate,
+            'capacity_gallons': body.capacity_gallons,
+            'mpg': body.mpg,
+            'current_lat': body.current_lat,
+            'current_lng': body.current_lng,
+            'status': body.status || 'active'
+        };
+
+        for (const [col, val] of Object.entries(baseFields)) {
+            updates.push(`${col} = $${paramIndex}`);
+            values.push(val);
+            paramIndex++;
+        }
+
+        // Enhanced columns that may or may not exist
+        const enhancedFields = {
+            'assigned_driver_id': body.assigned_driver_id || null,
+            'empty_weight': body.empty_weight,
+            'gvwr': body.gvwr,
+            'gcwr': body.gcwr,
+            'max_payload': body.max_payload,
+            'front_axle_weight': body.front_axle_weight,
+            'rear_axle_weight': body.rear_axle_weight,
+            'axle_configuration': body.axle_configuration,
+            'tank_capacity_gallons': body.tank_capacity_gallons,
+            'tank_material': body.tank_material,
+            'tank_last_inspection': body.tank_last_inspection,
+            'tank_next_inspection': body.tank_next_inspection,
+            'tank_certification': body.tank_certification,
+            'tank_manufacturer': body.tank_manufacturer,
+            'tank_serial_number': body.tank_serial_number,
+            'tank_manufacture_date': body.tank_manufacture_date,
+            'working_pressure_psi': body.working_pressure_psi,
+            'product_type': body.product_type,
+            'product_weight_per_gallon': body.product_weight_per_gallon,
+            'fuel_tank_capacity': body.fuel_tank_capacity,
+            'fuel_type': body.fuel_type,
+            'diesel_weight_per_gallon': body.diesel_weight_per_gallon,
+            'avg_mpg': body.avg_mpg,
+            'cost_per_mile': body.cost_per_mile,
+            'def_tank_capacity': body.def_tank_capacity,
+            'has_pump': body.has_pump,
+            'pump_type': body.pump_type,
+            'meter_type': body.meter_type,
+            'meter_serial_number': body.meter_serial_number,
+            'meter_last_calibration': body.meter_last_calibration,
+            'meter_next_calibration': body.meter_next_calibration,
+            'dot_number': body.dot_number,
+            'mc_number': body.mc_number,
+            'registration_number': body.registration_number,
+            'registration_state': body.registration_state,
+            'registration_expiration': body.registration_expiration || body.registration_expiry,
+            'last_dot_inspection': body.last_dot_inspection,
+            'next_dot_inspection': body.next_dot_inspection,
+            'dot_inspection_status': body.dot_inspection_status,
+            'inspection_decal_number': body.inspection_decal_number,
+            'ifta_account': body.ifta_account,
+            'irp_account': body.irp_account,
+            'insurance_policy_number': body.insurance_policy_number,
+            'insurance_provider': body.insurance_provider,
+            'insurance_expiration': body.insurance_expiration,
+            'liability_coverage': body.liability_coverage,
+            'cargo_coverage': body.cargo_coverage,
+            'last_oil_change': body.last_oil_change,
+            'last_oil_change_miles': body.last_oil_change_miles,
+            'next_oil_change_miles': body.next_oil_change_miles,
+            'oil_change_interval_miles': body.oil_change_interval_miles,
+            'last_service_date': body.last_service_date,
+            'last_service_mileage': body.last_service_mileage,
+            'next_service_date': body.next_service_date,
+            'next_service_mileage': body.next_service_mileage,
+            'current_odometer': body.current_odometer || body.odometer,
+            'total_hours': body.total_hours,
+            'tire_size': body.tire_size,
+            'tire_type': body.tire_type,
+            'tire_last_replaced': body.tire_last_replaced,
+            'telematics_device_id': body.telematics_device_id,
+            'telematics_provider': body.telematics_provider,
+            'has_lift_gate': body.has_lift_gate,
+            'has_pto_pump': body.has_pto_pump,
+            'has_gps_tracker': body.has_gps_tracker,
+            'has_dash_cam': body.has_dash_cam,
+            'has_eld': body.has_eld,
+            'eld_provider': body.eld_provider,
+            'eld_serial_number': body.eld_serial_number,
+            'purchase_date': body.purchase_date,
+            'purchase_price': body.purchase_price,
+            'current_value': body.current_value,
+            'monthly_payment': body.monthly_payment,
+            'monthly_insurance': body.monthly_insurance,
+            'notes': body.notes
+        };
+
+        // Check which enhanced columns exist
+        try {
+            const colCheck = await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'trucks' AND table_schema = 'public'`);
+            const existingCols = colCheck.rows.map(r => r.column_name);
+            
+            for (const [col, val] of Object.entries(enhancedFields)) {
+                if (existingCols.includes(col)) {
+                    updates.push(`${col} = $${paramIndex}`);
+                    values.push(val);
+                    paramIndex++;
+                }
+            }
+        } catch (e) {
+            console.log('Enhanced columns check failed');
+        }
+
+        values.push(id);
+        values.push(companyId);
+
         const result = await query(
-            `UPDATE trucks SET 
-                dc_id = $1, assigned_driver_id = $2, name = $3, make = $4, model = $5, year = $6, vin = $7, license_plate = $8,
-                capacity_gallons = $9, mpg = $10, current_lat = $11, current_lng = $12, status = $13,
-                empty_weight = $14, gvwr = $15, gcwr = $16, max_payload = $17, front_axle_weight = $18, rear_axle_weight = $19, axle_configuration = $20,
-                tank_capacity_gallons = $21, tank_material = $22, tank_last_inspection = $23, tank_next_inspection = $24, tank_certification = $25,
-                tank_manufacturer = $26, tank_serial_number = $27, tank_manufacture_date = $28, working_pressure_psi = $29,
-                product_type = $30, product_weight_per_gallon = $31,
-                fuel_tank_capacity = $32, fuel_type = $33, diesel_weight_per_gallon = $34, avg_mpg = $35, cost_per_mile = $36, def_tank_capacity = $37,
-                has_pump = $38, pump_type = $39, meter_type = $40, meter_serial_number = $41, meter_last_calibration = $42, meter_next_calibration = $43,
-                dot_number = $44, mc_number = $45, registration_number = $46, registration_state = $47, registration_expiration = $48,
-                last_dot_inspection = $49, next_dot_inspection = $50, dot_inspection_status = $51, inspection_decal_number = $52,
-                ifta_account = $53, irp_account = $54,
-                insurance_policy_number = $55, insurance_provider = $56, insurance_expiration = $57, liability_coverage = $58, cargo_coverage = $59,
-                last_oil_change = $60, last_oil_change_miles = $61, next_oil_change_miles = $62, oil_change_interval_miles = $63,
-                last_service_date = $64, last_service_mileage = $65, next_service_date = $66, next_service_mileage = $67,
-                current_odometer = $68, total_hours = $69, tire_size = $70, tire_last_replaced = $71,
-                telematics_device_id = $72, telematics_provider = $73,
-                has_lift_gate = $74, has_pto_pump = $75, has_gps_tracker = $76, has_dash_cam = $77, has_eld = $78, eld_provider = $79, eld_serial_number = $80,
-                purchase_date = $81, purchase_price = $82, current_value = $83, monthly_payment = $84, monthly_insurance = $85, notes = $86
-            WHERE id = $87 AND company_id = $88 RETURNING *`,
-            [
-                body.dc_id, body.assigned_driver_id, body.name, body.make, body.model, body.year, body.vin, body.license_plate,
-                body.capacity_gallons, body.mpg, body.current_lat, body.current_lng, body.status || 'active',
-                body.empty_weight, body.gvwr, body.gcwr, body.max_payload, body.front_axle_weight, body.rear_axle_weight, body.axle_configuration,
-                body.tank_capacity_gallons, body.tank_material, body.tank_last_inspection, body.tank_next_inspection, body.tank_certification,
-                body.tank_manufacturer, body.tank_serial_number, body.tank_manufacture_date, body.working_pressure_psi,
-                body.product_type, body.product_weight_per_gallon,
-                body.fuel_tank_capacity, body.fuel_type, body.diesel_weight_per_gallon, body.avg_mpg, body.cost_per_mile, body.def_tank_capacity,
-                body.has_pump, body.pump_type, body.meter_type, body.meter_serial_number, body.meter_last_calibration, body.meter_next_calibration,
-                body.dot_number, body.mc_number, body.registration_number, body.registration_state, body.registration_expiration || body.registration_expiry,
-                body.last_dot_inspection, body.next_dot_inspection, body.dot_inspection_status, body.inspection_decal_number,
-                body.ifta_account, body.irp_account,
-                body.insurance_policy_number, body.insurance_provider, body.insurance_expiration, body.liability_coverage, body.cargo_coverage,
-                body.last_oil_change, body.last_oil_change_miles, body.next_oil_change_miles, body.oil_change_interval_miles,
-                body.last_service_date, body.last_service_mileage, body.next_service_date, body.next_service_mileage,
-                body.current_odometer || body.odometer, body.total_hours, body.tire_size, body.tire_last_replaced,
-                body.telematics_device_id, body.telematics_provider,
-                body.has_lift_gate, body.has_pto_pump, body.has_gps_tracker, body.has_dash_cam, body.has_eld, body.eld_provider, body.eld_serial_number,
-                body.purchase_date, body.purchase_price, body.current_value, body.monthly_payment, body.monthly_insurance, body.notes,
-                id, companyId
-            ]
+            `UPDATE trucks SET ${updates.join(', ')} WHERE id = $${paramIndex} AND company_id = $${paramIndex + 1} RETURNING *`,
+            values
         );
         if (result.rows.length === 0) return error('Not found', 404);
         return success(result.rows[0]);
