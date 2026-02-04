@@ -248,7 +248,8 @@
                 { id: 'dashboard', icon: '📊', label: 'Dashboard' },
                 { id: 'customers', icon: '👥', label: 'Customers' },
                 { id: 'orders', icon: '📦', label: 'Orders' },
-                { id: 'routes', icon: '🗺️', label: 'Routes' },
+                { id: 'route-templates', icon: '🗺️', label: 'Route Templates' },
+                { id: 'active-routes', icon: '🚀', label: 'Active Routes' },
                 { id: 'trucks', icon: '🚚', label: 'Trucks' },
                 { id: 'drivers', icon: '👷', label: 'Drivers' },
                 { id: 'dcs', icon: '🏭', label: 'Distribution Centers' },
@@ -294,6 +295,8 @@
                                 {activeView === 'dashboard' && <DashboardView data={data} onRefresh={loadData} onNavigate={(view, placeData) => { setActiveView(view); if (placeData) window.pendingRouteLocation = placeData; }} />}
                                 {activeView === 'customers' && <CustomersView data={data} onRefresh={loadData} />}
                                 {activeView === 'orders' && <OrdersView data={data} onRefresh={loadData} />}
+                                {activeView === 'route-templates' && <RouteTemplatesView data={data} onRefresh={loadData} />}
+                                {activeView === 'active-routes' && <ActiveRoutesView data={data} onRefresh={loadData} />}
                                 {activeView === 'routes' && <RoutesView data={data} onRefresh={loadData} />}
                                 {activeView === 'trucks' && <TrucksView data={data} onRefresh={loadData} />}
                                 {activeView === 'drivers' && <DriversView data={data} onRefresh={loadData} />}
@@ -448,9 +451,9 @@
                                 infoWindow.close();
                             });
                             document.getElementById('add-to-route-btn')?.addEventListener('click', () => {
-                                // Navigate to routes with this location pre-filled
+                                // Navigate to route templates - user can add customer to a template
                                 if (onNavigate) {
-                                    onNavigate('routes', placeData);
+                                    onNavigate('route-templates', placeData);
                                 }
                                 infoWindow.close();
                             });
@@ -593,9 +596,27 @@
             };
 
             const pendingOrders = (data?.orders || []).filter(o => o.status === 'pending').length;
-            const activeRoutes = (data?.routes || []).filter(r => r.status === 'planned' || r.status === 'in_progress').length;
+            const [activeRuns, setActiveRuns] = useState(0);
+            const [routeTemplates, setRouteTemplates] = useState(0);
             const activeTrucks = (data?.trucks || []).filter(t => t.status === 'active').length;
             const lowTankCustomers = (data?.customers || []).filter(c => c.current_level < 25).length;
+
+            // Load route stats
+            useEffect(() => {
+                const loadRouteStats = async () => {
+                    try {
+                        const [runsResult, templatesResult] = await Promise.all([
+                            api.request('/routes-v2/runs?status=in_progress'),
+                            api.request('/routes-v2/templates')
+                        ]);
+                        setActiveRuns(runsResult?.length || 0);
+                        setRouteTemplates(templatesResult?.length || 0);
+                    } catch (err) {
+                        console.log('Could not load route stats:', err.message);
+                    }
+                };
+                loadRouteStats();
+            }, []);
 
             return (
                 <>
@@ -612,10 +633,15 @@
                             <div className="stat-card-value">{pendingOrders}</div>
                             <div className="stat-card-label">Pending Orders</div>
                         </div>
-                        <div className="stat-card">
-                            <div className="stat-card-icon">🗺️</div>
-                            <div className="stat-card-value">{activeRoutes}</div>
+                        <div className="stat-card" style={{cursor:'pointer'}} onClick={() => onNavigate('active-routes')}>
+                            <div className="stat-card-icon">🚀</div>
+                            <div className="stat-card-value">{activeRuns}</div>
                             <div className="stat-card-label">Active Routes</div>
+                        </div>
+                        <div className="stat-card" style={{cursor:'pointer'}} onClick={() => onNavigate('route-templates')}>
+                            <div className="stat-card-icon">🗺️</div>
+                            <div className="stat-card-value">{routeTemplates}</div>
+                            <div className="stat-card-label">Route Templates</div>
                         </div>
                         <div className="stat-card">
                             <div className="stat-card-icon">🚚</div>
@@ -1396,7 +1422,888 @@
         }
 
         // =====================================================
-        // ROUTES VIEW - With Route Optimization
+        // ROUTE TEMPLATES VIEW - Keep-Full Service Model
+        // =====================================================
+        function RouteTemplatesView({ data, onRefresh }) {
+            const [templates, setTemplates] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [showBuilder, setShowBuilder] = useState(false);
+            const [editTemplate, setEditTemplate] = useState(null);
+            const [error, setError] = useState('');
+
+            // Load templates
+            useEffect(() => {
+                loadTemplates();
+            }, []);
+
+            const loadTemplates = async () => {
+                try {
+                    setLoading(true);
+                    const result = await api.request('/routes-v2/templates');
+                    setTemplates(result);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleDelete = async (id) => {
+                if (!confirm('Delete this route template?')) return;
+                try {
+                    await api.request(`/routes-v2/templates/${id}`, { method: 'DELETE' });
+                    loadTemplates();
+                } catch (err) {
+                    alert('Error: ' + err.message);
+                }
+            };
+
+            const handleStartRoute = async (template) => {
+                try {
+                    const result = await api.request('/routes-v2/runs', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            template_id: template.id,
+                            scheduled_date: new Date().toISOString().split('T')[0]
+                        })
+                    });
+                    alert('Route started! Route ID: ' + result.id);
+                    onRefresh();
+                } catch (err) {
+                    alert('Error: ' + err.message);
+                }
+            };
+
+            const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+            if (showBuilder) {
+                return <RouteTemplateBuilder 
+                    data={data} 
+                    template={editTemplate}
+                    onBack={() => { setShowBuilder(false); setEditTemplate(null); }}
+                    onSave={() => { setShowBuilder(false); setEditTemplate(null); loadTemplates(); }}
+                />;
+            }
+
+            return (
+                <>
+                    <div className="page-header">
+                        <div>
+                            <h1>🗺️ Route Templates</h1>
+                            <p className="text-muted">Recurring routes for keep-full service</p>
+                        </div>
+                        <button className="btn btn-primary" onClick={() => setShowBuilder(true)}>
+                            + Create Template
+                        </button>
+                    </div>
+
+                    {error && <div className="error-message">{error}</div>}
+
+                    {loading ? (
+                        <div className="loading"><div className="spinner"></div></div>
+                    ) : templates.length === 0 ? (
+                        <div className="card" style={{textAlign:'center',padding:'3rem'}}>
+                            <div style={{fontSize:'3rem',marginBottom:'1rem'}}>🗺️</div>
+                            <h3>No Route Templates Yet</h3>
+                            <p className="text-muted" style={{marginBottom:'1.5rem'}}>Create recurring routes by selecting customers and optimizing stop order</p>
+                            <button className="btn btn-primary" onClick={() => setShowBuilder(true)}>+ Create First Template</button>
+                        </div>
+                    ) : (
+                        <div className="card">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Route Name</th>
+                                        <th>Day</th>
+                                        <th>DC</th>
+                                        <th>Driver</th>
+                                        <th>Stops</th>
+                                        <th>Est. Miles</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {templates.map(t => (
+                                        <tr key={t.id}>
+                                            <td><strong>{t.name}</strong></td>
+                                            <td>{t.day_of_week !== null ? dayNames[t.day_of_week] : '—'}</td>
+                                            <td>{t.dc_name || '—'}</td>
+                                            <td>{t.driver_name || 'Unassigned'}</td>
+                                            <td>{t.stop_count || t.total_stops || 0}</td>
+                                            <td>{t.estimated_miles ? `${t.estimated_miles} mi` : '—'}</td>
+                                            <td><span className={`status-badge status-${t.status}`}>{t.status}</span></td>
+                                            <td>
+                                                <div style={{display:'flex',gap:'0.5rem'}}>
+                                                    <button className="btn btn-success btn-sm" onClick={() => handleStartRoute(t)} title="Start this route today">▶️ Run</button>
+                                                    <button className="btn btn-secondary btn-sm" onClick={() => { setEditTemplate(t); setShowBuilder(true); }}>✏️</button>
+                                                    <button className="btn btn-danger btn-sm" onClick={() => handleDelete(t.id)}>🗑️</button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </>
+            );
+        }
+
+        // =====================================================
+        // ROUTE TEMPLATE BUILDER
+        // =====================================================
+        function RouteTemplateBuilder({ data, template, onBack, onSave }) {
+            const [templateName, setTemplateName] = useState(template?.name || '');
+            const [selectedDC, setSelectedDC] = useState(template?.dc_id || '');
+            const [dayOfWeek, setDayOfWeek] = useState(template?.day_of_week ?? '');
+            const [assignedDriver, setAssignedDriver] = useState(template?.assigned_driver_id || '');
+            const [assignedTruck, setAssignedTruck] = useState(template?.assigned_truck_id || '');
+            const [selectedCustomers, setSelectedCustomers] = useState([]);
+            const [optimizedStops, setOptimizedStops] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [optimizing, setOptimizing] = useState(false);
+            const [error, setError] = useState('');
+            const [summary, setSummary] = useState(null);
+            const mapRef = useRef(null);
+            const mapInstance = useRef(null);
+            const markersRef = useRef([]);
+
+            // Get customers for selected DC
+            const dcCustomers = (data?.customers || []).filter(c => 
+                c.status === 'active' && 
+                (!selectedDC || c.preferred_dc_id === selectedDC || !c.preferred_dc_id) &&
+                c.lat && c.lng
+            );
+
+            // Load existing stops if editing
+            useEffect(() => {
+                if (template?.id) {
+                    loadTemplateStops();
+                }
+            }, [template]);
+
+            const loadTemplateStops = async () => {
+                try {
+                    const result = await api.request(`/routes-v2/templates/${template.id}`);
+                    if (result.stops) {
+                        setSelectedCustomers(result.stops.map(s => s.customer_id));
+                        setOptimizedStops(result.stops);
+                    }
+                } catch (err) {
+                    console.error('Error loading template stops:', err);
+                }
+            };
+
+            // Initialize map
+            useEffect(() => {
+                if (!mapRef.current || mapInstance.current) return;
+
+                const hq = (data?.distributionCenters || [])[0];
+                const map = new google.maps.Map(mapRef.current, {
+                    center: { lat: hq?.lat ? parseFloat(hq.lat) : 39.8, lng: hq?.lng ? parseFloat(hq.lng) : -98.5 },
+                    zoom: hq?.lat ? 9 : 4,
+                    mapTypeControl: true,
+                    streetViewControl: false
+                });
+                mapInstance.current = map;
+            }, []);
+
+            // Update map markers when customers selected or optimized
+            useEffect(() => {
+                if (!mapInstance.current) return;
+                const map = mapInstance.current;
+
+                // Clear existing
+                markersRef.current.forEach(m => m.setMap(null));
+                markersRef.current = [];
+
+                const bounds = new google.maps.LatLngBounds();
+                const dc = (data?.distributionCenters || []).find(d => d.id === selectedDC);
+
+                // DC marker
+                if (dc?.lat && dc?.lng) {
+                    const dcMarker = new google.maps.Marker({
+                        position: { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) },
+                        map,
+                        title: dc.name,
+                        icon: {
+                            url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="#6366F1"><path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/></svg>'),
+                            scaledSize: new google.maps.Size(32, 32)
+                        }
+                    });
+                    markersRef.current.push(dcMarker);
+                    bounds.extend(dcMarker.getPosition());
+                }
+
+                // Customer markers (numbered if optimized)
+                const stopsToShow = optimizedStops.length > 0 ? optimizedStops : 
+                    dcCustomers.filter(c => selectedCustomers.includes(c.id)).map((c, i) => ({ ...c, customer_id: c.id, stop_number: i + 1 }));
+
+                stopsToShow.forEach((stop, idx) => {
+                    const cust = optimizedStops.length > 0 ? 
+                        dcCustomers.find(c => c.id === stop.customer_id) || stop : 
+                        stop;
+                    
+                    if (!cust.lat || !cust.lng) return;
+
+                    const isOptimized = optimizedStops.length > 0;
+                    const marker = new google.maps.Marker({
+                        position: { lat: parseFloat(cust.lat), lng: parseFloat(cust.lng) },
+                        map,
+                        title: cust.name || cust.customer_name,
+                        label: isOptimized ? {
+                            text: String(stop.stop_number),
+                            color: 'white',
+                            fontWeight: 'bold'
+                        } : null,
+                        icon: isOptimized ? {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 14,
+                            fillColor: '#10B981',
+                            fillOpacity: 1,
+                            strokeColor: 'white',
+                            strokeWeight: 2
+                        } : {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 8,
+                            fillColor: '#F59E0B',
+                            fillOpacity: 1,
+                            strokeColor: 'white',
+                            strokeWeight: 2
+                        }
+                    });
+
+                    const infoWindow = new google.maps.InfoWindow({
+                        content: `<div style="color:#333"><strong>${isOptimized ? `Stop #${stop.stop_number}: ` : ''}${cust.name || cust.customer_name}</strong><br/>${cust.address || ''}<br/>Tank: ${cust.tank_size || '?'} gal @ ${cust.current_level || '?'}%</div>`
+                    });
+                    marker.addListener('click', () => infoWindow.open(map, marker));
+                    markersRef.current.push(marker);
+                    bounds.extend(marker.getPosition());
+                });
+
+                // Draw route line if optimized
+                if (optimizedStops.length > 1 && dc?.lat) {
+                    const path = [
+                        { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) },
+                        ...optimizedStops.map(s => {
+                            const c = dcCustomers.find(c => c.id === s.customer_id) || s;
+                            return { lat: parseFloat(c.lat || s.lat), lng: parseFloat(c.lng || s.lng) };
+                        }),
+                        { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) }
+                    ];
+
+                    const routeLine = new google.maps.Polyline({
+                        path,
+                        geodesic: true,
+                        strokeColor: '#6366F1',
+                        strokeOpacity: 0.8,
+                        strokeWeight: 3,
+                        map
+                    });
+                    markersRef.current.push(routeLine);
+                }
+
+                if (markersRef.current.length > 1) {
+                    map.fitBounds(bounds);
+                }
+            }, [selectedCustomers, optimizedStops, selectedDC]);
+
+            const handleToggleCustomer = (customerId) => {
+                setOptimizedStops([]); // Clear optimization when selection changes
+                setSummary(null);
+                setSelectedCustomers(prev => 
+                    prev.includes(customerId) 
+                        ? prev.filter(id => id !== customerId)
+                        : [...prev, customerId]
+                );
+            };
+
+            const handleSelectAll = () => {
+                setOptimizedStops([]);
+                setSummary(null);
+                setSelectedCustomers(dcCustomers.map(c => c.id));
+            };
+
+            const handleClearAll = () => {
+                setOptimizedStops([]);
+                setSummary(null);
+                setSelectedCustomers([]);
+            };
+
+            const handleOptimize = async () => {
+                if (!selectedDC) {
+                    setError('Please select a distribution center');
+                    return;
+                }
+                if (selectedCustomers.length < 2) {
+                    setError('Please select at least 2 customers');
+                    return;
+                }
+
+                setOptimizing(true);
+                setError('');
+
+                try {
+                    const result = await api.request('/routes-v2/optimize', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            dc_id: selectedDC,
+                            customer_ids: selectedCustomers
+                        })
+                    });
+
+                    setOptimizedStops(result.stops);
+                    setSummary(result.summary);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setOptimizing(false);
+                }
+            };
+
+            const handleSave = async () => {
+                if (!templateName.trim()) {
+                    setError('Please enter a route name');
+                    return;
+                }
+                if (!selectedDC) {
+                    setError('Please select a distribution center');
+                    return;
+                }
+                if (optimizedStops.length === 0 && selectedCustomers.length === 0) {
+                    setError('Please add customers to the route');
+                    return;
+                }
+
+                setLoading(true);
+                setError('');
+
+                try {
+                    // Create or update template
+                    let templateId = template?.id;
+                    
+                    // Include estimated miles/duration from optimization if available
+                    const templateData = {
+                        name: templateName,
+                        dc_id: selectedDC,
+                        day_of_week: dayOfWeek !== '' ? parseInt(dayOfWeek) : null,
+                        assigned_driver_id: assignedDriver || null,
+                        assigned_truck_id: assignedTruck || null,
+                        status: 'active'
+                    };
+                    
+                    if (summary) {
+                        templateData.estimated_miles = summary.total_miles;
+                        templateData.estimated_duration_minutes = summary.estimated_total_time_minutes;
+                    }
+                    
+                    if (templateId) {
+                        await api.request(`/routes-v2/templates/${templateId}`, {
+                            method: 'PUT',
+                            body: JSON.stringify(templateData)
+                        });
+                    } else {
+                        const result = await api.request('/routes-v2/templates', {
+                            method: 'POST',
+                            body: JSON.stringify(templateData)
+                        });
+                        templateId = result.id;
+                    }
+
+                    // Save stops
+                    const stopsToSave = optimizedStops.length > 0 ? optimizedStops : 
+                        selectedCustomers.map((id, idx) => ({ customer_id: id, stop_number: idx + 1 }));
+
+                    await api.request(`/routes-v2/templates/${templateId}/stops`, {
+                        method: 'POST',
+                        body: JSON.stringify({ stops: stopsToSave })
+                    });
+
+                    onSave();
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const dayOptions = [
+                { value: '', label: 'No specific day' },
+                { value: '0', label: 'Sunday' },
+                { value: '1', label: 'Monday' },
+                { value: '2', label: 'Tuesday' },
+                { value: '3', label: 'Wednesday' },
+                { value: '4', label: 'Thursday' },
+                { value: '5', label: 'Friday' },
+                { value: '6', label: 'Saturday' }
+            ];
+
+            return (
+                <>
+                    <div className="page-header">
+                        <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                            <button className="btn btn-secondary" onClick={onBack}>← Back</button>
+                            <div>
+                                <h1>{template ? 'Edit' : 'Create'} Route Template</h1>
+                                <p className="text-muted">Select customers and optimize the route</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {error && <div className="error-message" style={{marginBottom:'1rem'}}>{error}</div>}
+
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1.5rem'}}>
+                        {/* Left Panel - Configuration */}
+                        <div>
+                            {/* Template Settings */}
+                            <div className="card" style={{marginBottom:'1rem'}}>
+                                <div className="card-header"><h3>📋 Route Settings</h3></div>
+                                <div className="card-body">
+                                    <div className="form-group">
+                                        <label>Route Name *</label>
+                                        <input type="text" className="form-control" value={templateName} onChange={e => setTemplateName(e.target.value)} placeholder="e.g., Monday North Route" />
+                                    </div>
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label>Distribution Center *</label>
+                                            <select className="form-control" value={selectedDC} onChange={e => { setSelectedDC(e.target.value); setSelectedCustomers([]); setOptimizedStops([]); }}>
+                                                <option value="">Select DC...</option>
+                                                {(data?.distributionCenters || []).map(dc => (
+                                                    <option key={dc.id} value={dc.id}>{dc.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="form-group">
+                                            <label>Day of Week</label>
+                                            <select className="form-control" value={dayOfWeek} onChange={e => setDayOfWeek(e.target.value)}>
+                                                {dayOptions.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label>Assigned Driver</label>
+                                            <select className="form-control" value={assignedDriver} onChange={e => setAssignedDriver(e.target.value)}>
+                                                <option value="">Unassigned</option>
+                                                {(data?.drivers || []).filter(d => d.status === 'active').map(d => (
+                                                    <option key={d.id} value={d.id}>{d.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="form-group">
+                                            <label>Assigned Truck</label>
+                                            <select className="form-control" value={assignedTruck} onChange={e => setAssignedTruck(e.target.value)}>
+                                                <option value="">Unassigned</option>
+                                                {(data?.trucks || []).filter(t => t.status === 'active').map(t => (
+                                                    <option key={t.id} value={t.id}>{t.code} - {t.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Customer Selection */}
+                            <div className="card">
+                                <div className="card-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                    <h3>👥 Select Customers ({selectedCustomers.length} selected)</h3>
+                                    <div style={{display:'flex',gap:'0.5rem'}}>
+                                        <button className="btn btn-sm btn-secondary" onClick={handleSelectAll}>Select All</button>
+                                        <button className="btn btn-sm btn-secondary" onClick={handleClearAll}>Clear</button>
+                                    </div>
+                                </div>
+                                <div style={{maxHeight:'350px',overflow:'auto'}}>
+                                    {!selectedDC ? (
+                                        <div className="text-muted" style={{textAlign:'center',padding:'2rem'}}>
+                                            ⬆️ Select a Distribution Center first
+                                        </div>
+                                    ) : dcCustomers.length === 0 ? (
+                                        <div className="text-muted" style={{textAlign:'center',padding:'2rem'}}>
+                                            No customers with coordinates found for this DC
+                                        </div>
+                                    ) : (
+                                        <table>
+                                            <thead><tr><th style={{width:'40px'}}></th><th>Customer</th><th>City</th><th>Tank</th><th>Level</th></tr></thead>
+                                            <tbody>
+                                                {dcCustomers.map(cust => (
+                                                    <tr key={cust.id} style={{cursor:'pointer'}} onClick={() => handleToggleCustomer(cust.id)}>
+                                                        <td>
+                                                            <input type="checkbox" checked={selectedCustomers.includes(cust.id)} onChange={() => {}} style={{width:'18px',height:'18px'}} />
+                                                        </td>
+                                                        <td><strong>{cust.name}</strong><br/><small className="text-muted">{cust.code}</small></td>
+                                                        <td>{cust.city}</td>
+                                                        <td>{cust.tank_size} gal</td>
+                                                        <td>
+                                                            <span style={{color: cust.current_level <= 25 ? 'var(--danger)' : cust.current_level <= 50 ? 'var(--warning)' : 'var(--success)'}}>
+                                                                {cust.current_level}%
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Optimize Button */}
+                            <button 
+                                className="btn btn-success btn-block" 
+                                onClick={handleOptimize}
+                                disabled={optimizing || selectedCustomers.length < 2 || !selectedDC}
+                                style={{marginTop:'1rem',padding:'1rem',fontSize:'1.1rem'}}
+                            >
+                                {optimizing ? '⏳ Optimizing...' : '🚀 Optimize Stop Order'}
+                            </button>
+                        </div>
+
+                        {/* Right Panel - Map & Results */}
+                        <div>
+                            <div className="card">
+                                <div className="card-header"><h3>🗺️ Route Map</h3></div>
+                                <div style={{height:'400px'}}>
+                                    <div ref={mapRef} style={{height:'100%',width:'100%',borderRadius:'0 0 12px 12px'}}></div>
+                                </div>
+                            </div>
+
+                            {/* Optimization Results */}
+                            {summary && (
+                                <div className="card" style={{marginTop:'1rem',borderColor:'var(--success)'}}>
+                                    <div className="card-header" style={{background:'rgba(16,185,129,0.1)'}}>
+                                        <h3 style={{color:'var(--success)'}}>✅ Route Optimized!</h3>
+                                    </div>
+                                    <div className="card-body">
+                                        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'1rem',textAlign:'center'}}>
+                                            <div>
+                                                <div style={{fontSize:'1.5rem',fontWeight:'700',color:'var(--primary)'}}>{summary.total_stops}</div>
+                                                <div className="text-muted">Stops</div>
+                                            </div>
+                                            <div>
+                                                <div style={{fontSize:'1.5rem',fontWeight:'700',color:'var(--primary)'}}>{summary.total_miles} mi</div>
+                                                <div className="text-muted">Total Distance</div>
+                                            </div>
+                                            <div>
+                                                <div style={{fontSize:'1.5rem',fontWeight:'700',color:'var(--primary)'}}>{Math.floor(summary.estimated_total_time_minutes / 60)}h {summary.estimated_total_time_minutes % 60}m</div>
+                                                <div className="text-muted">Est. Duration</div>
+                                            </div>
+                                        </div>
+
+                                        {/* Stop Order */}
+                                        <div style={{marginTop:'1rem',maxHeight:'200px',overflow:'auto'}}>
+                                            <table style={{fontSize:'0.9rem'}}>
+                                                <thead><tr><th>#</th><th>Customer</th><th>City</th><th>Distance</th></tr></thead>
+                                                <tbody>
+                                                    {optimizedStops.map((stop, idx) => (
+                                                        <tr key={stop.customer_id}>
+                                                            <td><strong>{stop.stop_number}</strong></td>
+                                                            <td>{stop.customer_name}</td>
+                                                            <td>{stop.city}</td>
+                                                            <td>{stop.distance_from_previous} mi</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                        <button 
+                                            className="btn btn-primary btn-block" 
+                                            onClick={handleSave}
+                                            disabled={loading}
+                                            style={{marginTop:'1rem',padding:'1rem'}}
+                                        >
+                                            {loading ? 'Saving...' : '💾 Save Route Template'}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Save without optimization */}
+                            {!summary && selectedCustomers.length > 0 && (
+                                <button 
+                                    className="btn btn-secondary btn-block" 
+                                    onClick={handleSave}
+                                    disabled={loading || !templateName}
+                                    style={{marginTop:'1rem',padding:'1rem'}}
+                                >
+                                    {loading ? 'Saving...' : '💾 Save Without Optimization'}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </>
+            );
+        }
+
+        // =====================================================
+        // ACTIVE ROUTES VIEW - Route Runs in Progress
+        // =====================================================
+        function ActiveRoutesView({ data, onRefresh }) {
+            const [runs, setRuns] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [selectedRun, setSelectedRun] = useState(null);
+            const [error, setError] = useState('');
+
+            useEffect(() => {
+                loadRuns();
+            }, []);
+
+            const loadRuns = async () => {
+                try {
+                    setLoading(true);
+                    const result = await api.request('/routes-v2/runs');
+                    setRuns(result);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleStatusChange = async (runId, newStatus) => {
+                try {
+                    await api.request(`/routes-v2/runs/${runId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ status: newStatus })
+                    });
+                    loadRuns();
+                } catch (err) {
+                    alert('Error: ' + err.message);
+                }
+            };
+
+            const getStatusColor = (status) => {
+                switch(status) {
+                    case 'scheduled': return 'var(--text-muted)';
+                    case 'in_progress': return 'var(--warning)';
+                    case 'completed': return 'var(--success)';
+                    case 'cancelled': return 'var(--danger)';
+                    default: return 'var(--text-secondary)';
+                }
+            };
+
+            if (selectedRun) {
+                return <RouteRunDetail run={selectedRun} onBack={() => { setSelectedRun(null); loadRuns(); }} />;
+            }
+
+            return (
+                <>
+                    <div className="page-header">
+                        <div>
+                            <h1>🚀 Active Routes</h1>
+                            <p className="text-muted">Today's routes and route history</p>
+                        </div>
+                        <button className="btn btn-secondary" onClick={loadRuns}>↻ Refresh</button>
+                    </div>
+
+                    {error && <div className="error-message">{error}</div>}
+
+                    {loading ? (
+                        <div className="loading"><div className="spinner"></div></div>
+                    ) : runs.length === 0 ? (
+                        <div className="card" style={{textAlign:'center',padding:'3rem'}}>
+                            <div style={{fontSize:'3rem',marginBottom:'1rem'}}>🚀</div>
+                            <h3>No Active Routes</h3>
+                            <p className="text-muted">Start a route from Route Templates to begin deliveries</p>
+                        </div>
+                    ) : (
+                        <div className="card">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Route</th>
+                                        <th>Date</th>
+                                        <th>Driver</th>
+                                        <th>Truck</th>
+                                        <th>Progress</th>
+                                        <th>Gallons</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {runs.map(run => (
+                                        <tr key={run.id}>
+                                            <td><strong>{run.name || run.template_name || 'Ad-hoc Route'}</strong></td>
+                                            <td>{new Date(run.scheduled_date).toLocaleDateString()}</td>
+                                            <td>{run.driver_name || 'Unassigned'}</td>
+                                            <td>{run.truck_code || '—'}</td>
+                                            <td>
+                                                <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                                                    <div style={{flex:1,height:'8px',background:'var(--bg-dark)',borderRadius:'4px',overflow:'hidden'}}>
+                                                        <div style={{width:`${(run.stops_completed / run.total_stops) * 100}%`,height:'100%',background:'var(--success)'}}></div>
+                                                    </div>
+                                                    <span style={{fontSize:'0.85rem'}}>{run.stops_completed}/{run.total_stops}</span>
+                                                </div>
+                                            </td>
+                                            <td>{run.total_gallons_delivered ? `${parseFloat(run.total_gallons_delivered).toLocaleString()} gal` : '—'}</td>
+                                            <td><span style={{color: getStatusColor(run.status),fontWeight:'600'}}>{run.status}</span></td>
+                                            <td>
+                                                <div style={{display:'flex',gap:'0.5rem'}}>
+                                                    <button className="btn btn-primary btn-sm" onClick={() => setSelectedRun(run)}>View</button>
+                                                    {run.status === 'scheduled' && (
+                                                        <button className="btn btn-success btn-sm" onClick={() => handleStatusChange(run.id, 'in_progress')}>Start</button>
+                                                    )}
+                                                    {run.status === 'in_progress' && (
+                                                        <button className="btn btn-warning btn-sm" onClick={() => handleStatusChange(run.id, 'completed')}>Complete</button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </>
+            );
+        }
+
+        // =====================================================
+        // ROUTE RUN DETAIL - View/Edit stops during a run
+        // =====================================================
+        function RouteRunDetail({ run, onBack }) {
+            const [runData, setRunData] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                loadRunDetail();
+            }, [run.id]);
+
+            const loadRunDetail = async () => {
+                try {
+                    const result = await api.request(`/routes-v2/runs/${run.id}`);
+                    setRunData(result);
+                } catch (err) {
+                    console.error(err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleStopUpdate = async (stopId, updates) => {
+                try {
+                    await api.request(`/routes-v2/runs/${run.id}/stops/${stopId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify(updates)
+                    });
+                    loadRunDetail();
+                } catch (err) {
+                    alert('Error: ' + err.message);
+                }
+            };
+
+            const handleCompleteStop = async (stop) => {
+                const gallons = prompt('Gallons delivered (0 if tank was full):', '0');
+                if (gallons === null) return;
+                
+                const tankAfter = prompt('Tank level after fill (%):', '100');
+                if (tankAfter === null) return;
+
+                await handleStopUpdate(stop.id, {
+                    status: 'completed',
+                    gallons_delivered: parseFloat(gallons) || 0,
+                    tank_level_after: parseFloat(tankAfter) || 100,
+                    delivery_total: (parseFloat(gallons) || 0) * (stop.price_per_gallon || 2.50),
+                    arrived_at: new Date().toISOString(),
+                    departed_at: new Date().toISOString()
+                });
+            };
+
+            const handleSkipStop = async (stop) => {
+                const reason = prompt('Reason for skipping:');
+                if (!reason) return;
+                
+                await handleStopUpdate(stop.id, {
+                    status: 'skipped',
+                    skip_reason: reason
+                });
+            };
+
+            if (loading) return <div className="loading"><div className="spinner"></div></div>;
+
+            return (
+                <>
+                    <div className="page-header">
+                        <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                            <button className="btn btn-secondary" onClick={onBack}>← Back</button>
+                            <div>
+                                <h1>{runData?.name || 'Route'}</h1>
+                                <p className="text-muted">{new Date(runData?.scheduled_date).toLocaleDateString()} • {runData?.driver_name || 'No driver'} • {runData?.truck_code || 'No truck'}</p>
+                            </div>
+                        </div>
+                        <div className="stats-grid" style={{gap:'1rem'}}>
+                            <div className="stat-card" style={{padding:'0.75rem 1rem'}}>
+                                <div className="stat-value">{runData?.stops_completed}/{runData?.total_stops}</div>
+                                <div className="stat-label">Stops</div>
+                            </div>
+                            <div className="stat-card" style={{padding:'0.75rem 1rem'}}>
+                                <div className="stat-value">{parseFloat(runData?.total_gallons_delivered || 0).toLocaleString()}</div>
+                                <div className="stat-label">Gallons</div>
+                            </div>
+                            <div className="stat-card" style={{padding:'0.75rem 1rem'}}>
+                                <div className="stat-value">${parseFloat(runData?.total_revenue || 0).toLocaleString()}</div>
+                                <div className="stat-label">Revenue</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="card">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Customer</th>
+                                    <th>Address</th>
+                                    <th>Tank Before</th>
+                                    <th>Gallons</th>
+                                    <th>Tank After</th>
+                                    <th>Total</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(runData?.stops || []).map(stop => (
+                                    <tr key={stop.id} style={{opacity: stop.status === 'skipped' ? 0.5 : 1}}>
+                                        <td><strong>{stop.stop_number}</strong></td>
+                                        <td>
+                                            <strong>{stop.customer_name}</strong>
+                                            {stop.phone && <><br/><small className="text-muted">{stop.phone}</small></>}
+                                        </td>
+                                        <td>{stop.address}<br/><small className="text-muted">{stop.city}, {stop.state}</small></td>
+                                        <td>
+                                            <span style={{color: stop.tank_level_before <= 25 ? 'var(--danger)' : stop.tank_level_before <= 50 ? 'var(--warning)' : 'var(--success)'}}>
+                                                {stop.tank_level_before}%
+                                            </span>
+                                            <br/><small className="text-muted">{stop.tank_size_gallons} gal tank</small>
+                                        </td>
+                                        <td><strong>{stop.gallons_delivered || '—'}</strong></td>
+                                        <td>{stop.tank_level_after ? `${stop.tank_level_after}%` : '—'}</td>
+                                        <td>{stop.delivery_total ? `$${parseFloat(stop.delivery_total).toFixed(2)}` : '—'}</td>
+                                        <td>
+                                            <span className={`status-badge status-${stop.status}`}>{stop.status}</span>
+                                            {stop.skip_reason && <><br/><small className="text-muted">{stop.skip_reason}</small></>}
+                                        </td>
+                                        <td>
+                                            {stop.status === 'pending' && (
+                                                <div style={{display:'flex',gap:'0.5rem'}}>
+                                                    <button className="btn btn-success btn-sm" onClick={() => handleCompleteStop(stop)}>✓ Complete</button>
+                                                    <button className="btn btn-warning btn-sm" onClick={() => handleSkipStop(stop)}>Skip</button>
+                                                </div>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </>
+            );
+        }
+
+        // =====================================================
+        // ROUTES VIEW - With Route Optimization (Legacy)
         // =====================================================
         function RoutesView({ data, onRefresh }) {
             const [showModal, setShowModal] = useState(false);
@@ -1760,7 +2667,8 @@
             };
 
             const handleSelectAll = () => {
-                const dcOrders = pendingOrders.filter(o => !selectedDC || o.dc_id === selectedDC);
+                if (!selectedDC) return;
+                const dcOrders = pendingOrders.filter(o => o.dc_id === selectedDC);
                 setSelectedOrders(dcOrders.map(o => o.id));
                 setOptimizedRoute(null);
             };
@@ -1917,25 +2825,37 @@
                                     </div>
                                 </div>
                                 <div style={{maxHeight:'300px',overflow:'auto'}}>
-                                    <table>
-                                        <thead><tr><th style={{width:'40px'}}></th><th>Order</th><th>Customer</th><th>Gallons</th><th>City</th></tr></thead>
-                                        <tbody>
-                                            {pendingOrders.filter(o => !selectedDC || o.dc_id === selectedDC || !o.dc_id).map(order => (
-                                                <tr key={order.id} style={{cursor:'pointer'}} onClick={() => handleToggleOrder(order.id)}>
-                                                    <td>
-                                                        <input type="checkbox" checked={selectedOrders.includes(order.id)} onChange={() => {}} style={{width:'18px',height:'18px'}} />
-                                                    </td>
-                                                    <td><strong>{order.order_number}</strong></td>
-                                                    <td>{order.customer_name}</td>
-                                                    <td>{order.gallons_requested}</td>
-                                                    <td>{order.customer_city}</td>
-                                                </tr>
-                                            ))}
-                                            {pendingOrders.length === 0 && (
-                                                <tr><td colSpan="5" className="text-muted" style={{textAlign:'center',padding:'2rem'}}>No pending orders</td></tr>
-                                            )}
-                                        </tbody>
-                                    </table>
+                                    {!selectedDC ? (
+                                        <div className="text-muted" style={{textAlign:'center',padding:'2rem'}}>
+                                            ⬆️ Select a Distribution Center to see orders
+                                        </div>
+                                    ) : (
+                                        <table>
+                                            <thead><tr><th style={{width:'40px'}}></th><th>Order</th><th>Customer</th><th>Gallons</th><th>City</th><th>DC</th></tr></thead>
+                                            <tbody>
+                                                {pendingOrders.filter(o => o.dc_id === selectedDC).map(order => (
+                                                    <tr key={order.id} style={{cursor:'pointer'}} onClick={() => handleToggleOrder(order.id)}>
+                                                        <td>
+                                                            <input type="checkbox" checked={selectedOrders.includes(order.id)} onChange={() => {}} style={{width:'18px',height:'18px'}} />
+                                                        </td>
+                                                        <td><strong>{order.order_number}</strong></td>
+                                                        <td>{order.customer_name}</td>
+                                                        <td>{order.gallons_requested}</td>
+                                                        <td>{order.customer_city}</td>
+                                                        <td style={{fontSize:'0.8rem'}}>{order.dc_name || '—'}</td>
+                                                    </tr>
+                                                ))}
+                                                {pendingOrders.filter(o => o.dc_id === selectedDC).length === 0 && (
+                                                    <tr><td colSpan="6" className="text-muted" style={{textAlign:'center',padding:'2rem'}}>No pending orders for this DC</td></tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                    {selectedDC && pendingOrders.filter(o => !o.dc_id).length > 0 && (
+                                        <div style={{padding:'0.5rem',background:'rgba(245,158,11,0.1)',borderRadius:'4px',margin:'0.5rem',fontSize:'0.85rem',color:'var(--warning)'}}>
+                                            ⚠️ {pendingOrders.filter(o => !o.dc_id).length} orders have no DC assigned
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
