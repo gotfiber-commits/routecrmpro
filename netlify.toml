@@ -1,0 +1,45 @@
+[build]
+  functions = "netlify/functions"
+  publish = "public"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Redirect API calls to functions
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# Admin panel (super admin)
+[[redirects]]
+  from = "/admin"
+  to = "/admin.html"
+  status = 200
+
+[[redirects]]
+  from = "/admin/*"
+  to = "/admin.html"
+  status = 200
+
+# Tenant app
+[[redirects]]
+  from = "/app"
+  to = "/app.html"
+  status = 200
+
+[[redirects]]
+  from = "/app/*"
+  to = "/app.html"
+  status = 200
+
+# Root serves landing page (index.html) by default
+
+[dev]
+  port = 8888
+  targetPort = 3000
+  autoLaunch = false
+
+# Scheduled billing cycle - runs daily at 6 AM UTC
+[functions."billing-cycle"]
+  schedule = "0 6 * * *"
