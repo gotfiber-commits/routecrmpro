@@ -88,9 +88,14 @@ async function getAllData(companyId, user) {
         params.push(user.dcId);
     }
 
-    const [dcs, trucks, drivers, customers, orders, routes] = await Promise.all([
+    const [dcs, trucks, drivers, customers, orders, routes, activeRoutes] = await Promise.all([
         query('SELECT * FROM distribution_centers WHERE company_id = $1 ORDER BY name', [companyId]),
-        query(`SELECT * FROM trucks WHERE company_id = $1${user.dcId ? ' AND dc_id = $2' : ''} ORDER BY code`, params),
+        query(`SELECT t.*, dc.name as dc_name, d.name as driver_name
+               FROM trucks t
+               LEFT JOIN distribution_centers dc ON t.dc_id = dc.id
+               LEFT JOIN drivers d ON t.assigned_driver_id = d.id
+               WHERE t.company_id = $1${user.dcId ? ' AND t.dc_id = $2' : ''} 
+               ORDER BY t.code`, params),
         query(`SELECT * FROM drivers WHERE company_id = $1${user.dcId ? ' AND dc_id = $2' : ''} ORDER BY name`, params),
         query(`SELECT * FROM customers WHERE company_id = $1${user.dcId ? ' AND preferred_dc_id = $2' : ''} ORDER BY name`, params),
         query(`SELECT o.*, c.name as customer_name, c.address as customer_address, c.city as customer_city, c.lat, c.lng
@@ -103,7 +108,16 @@ async function getAllData(companyId, user) {
                LEFT JOIN drivers d ON r.driver_id = d.id
                LEFT JOIN trucks t ON r.truck_id = t.id
                WHERE r.company_id = $1${user.dcId ? ' AND r.dc_id = $2' : ''}
-               ORDER BY r.scheduled_date DESC LIMIT 50`, params)
+               ORDER BY r.scheduled_date DESC LIMIT 50`, params),
+        // Active routes from route_runs table
+        query(`SELECT rr.*, dc.name as dc_name, d.name as driver_name, t.name as truck_name, t.code as truck_code
+               FROM route_runs rr
+               LEFT JOIN distribution_centers dc ON rr.dc_id = dc.id
+               LEFT JOIN drivers d ON rr.driver_id = d.id
+               LEFT JOIN trucks t ON rr.truck_id = t.id
+               WHERE rr.company_id = $1 AND rr.status IN ('scheduled', 'in_progress')
+               ${user.dcId ? ' AND rr.dc_id = $2' : ''}
+               ORDER BY rr.scheduled_date DESC, rr.created_at DESC LIMIT 50`, params)
     ]);
 
     return success({
@@ -112,7 +126,8 @@ async function getAllData(companyId, user) {
         drivers: drivers.rows,
         customers: customers.rows,
         orders: orders.rows,
-        routes: routes.rows
+        routes: routes.rows,
+        activeRoutes: activeRoutes.rows
     });
 }
 
