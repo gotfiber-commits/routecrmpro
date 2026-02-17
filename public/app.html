@@ -619,6 +619,7 @@
             if (user?.role === 'admin') {
                 navItems.push(
                     { id: 'users', icon: '👤', label: 'Users' },
+                    { id: 'integrations', icon: '🔗', label: 'Integrations' },
                     { id: 'billing', icon: '💳', label: 'Billing' }
                 );
             }
@@ -663,6 +664,7 @@
                                 {activeView === 'drivers' && <DriversView data={data} onRefresh={loadData} />}
                                 {activeView === 'dcs' && <DCsView data={data} onRefresh={loadData} />}
                                 {activeView === 'users' && <UsersView data={data} onRefresh={loadData} />}
+                                {activeView === 'integrations' && <IntegrationsView data={data} onRefresh={loadData} />}
                                 {activeView === 'billing' && <BillingView />}
                             </>
                         )}
@@ -989,46 +991,170 @@
                     }
                     if (!pos) return;
 
+                    // Find assigned driver
+                    const assignedDriver = (data?.drivers || []).find(d => d.id === truck.assigned_driver_id);
+                    
+                    // Find active route for this truck
+                    const activeRoute = (data?.activeRoutes || data?.routes || []).find(r => 
+                        r.truck_id === truck.id && (r.status === 'in_progress' || r.status === 'scheduled')
+                    );
+
                     const statusColor = truck.status === 'active' ? '#10B981' : truck.status === 'maintenance' ? '#F59E0B' : '#94A3B8';
+                    const isMoving = truck.current_speed && parseFloat(truck.current_speed) > 2;
+                    
+                    // Truck icon - animated if moving, different color based on route status
+                    const iconColor = activeRoute?.status === 'in_progress' ? '#6366F1' : statusColor;
                     const marker = new google.maps.Marker({
                         position: pos, map, title: truck.name || truck.code, zIndex: 500,
                         icon: {
-                            url: 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="${statusColor}"><path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>`),
-                            scaledSize: new google.maps.Size(32, 32),
-                            anchor: new google.maps.Point(16, 16)
+                            url: 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="${iconColor}"><path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>`),
+                            scaledSize: new google.maps.Size(36, 36),
+                            anchor: new google.maps.Point(18, 18)
                         }
                     });
 
-                    const infoWindow = new google.maps.InfoWindow({
-                        content: `<div style="color:#333;min-width:200px;font-family:system-ui,-apple-system,sans-serif">
-                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-                                <span style="font-size:1.3rem">🚚</span>
-                                <div>
-                                    <div style="font-weight:700;font-size:0.95rem">${truck.name || truck.code}</div>
-                                    <div style="font-size:0.75rem;color:#666">${truck.make || ''} ${truck.model || ''} ${truck.year || ''}</div>
-                                </div>
+                    // Build comprehensive info window content
+                    let infoContent = `<div style="color:#333;min-width:280px;max-width:320px;font-family:system-ui,-apple-system,sans-serif">`;
+                    
+                    // Header with truck info
+                    infoContent += `
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #e5e7eb">
+                            <div style="width:42px;height:42px;background:linear-gradient(135deg, ${iconColor}, ${iconColor}dd);border-radius:8px;display:flex;align-items:center;justify-content:center">
+                                <span style="font-size:1.4rem">🚚</span>
                             </div>
-                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;font-size:0.78rem">
-                                <div style="background:#f0f0f5;padding:4px 6px;border-radius:4px;text-align:center">
-                                    <div style="font-weight:600">${(truck.capacity_gallons || 0).toLocaleString()}</div>
-                                    <div style="color:#888;font-size:0.65rem">Capacity (gal)</div>
-                                </div>
-                                <div style="padding:4px 6px;border-radius:4px;text-align:center;background:${truck.status === 'active' ? '#f0fdf4' : '#fffbeb'}">
-                                    <div style="font-weight:600;color:${statusColor}">${(truck.status || 'unknown').toUpperCase()}</div>
-                                    <div style="color:#888;font-size:0.65rem">Status</div>
-                                </div>
+                            <div style="flex:1">
+                                <div style="font-weight:700;font-size:1rem">${truck.name || truck.code}</div>
+                                <div style="font-size:0.75rem;color:#666">${truck.make || ''} ${truck.model || ''} ${truck.year || ''}</div>
                             </div>
-                            ${atDC ? '<div style="font-size:0.72rem;color:#888;margin-bottom:6px;font-style:italic">📍 Parked at DC (no GPS signal)</div>' : ''}
-                            ${truck.dc_name ? '<div style="font-size:0.8rem;color:#555;margin-bottom:8px">🏭 ' + truck.dc_name + '</div>' : ''}
-                            <div style="border-top:1px solid #e5e7eb;padding-top:8px">
-                                <button id="truck-detail-btn-${trkIdx}" style="width:100%;background:#334155;color:white;border:none;padding:6px;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">📋 View Truck Details</button>
+                            <div style="text-align:right">
+                                <div style="font-size:0.7rem;padding:2px 8px;border-radius:4px;font-weight:600;background:${truck.status === 'active' ? '#f0fdf4' : '#fffbeb'};color:${statusColor}">${(truck.status || 'unknown').toUpperCase()}</div>
                             </div>
-                        </div>`
-                    });
+                        </div>`;
+
+                    // Real-time GPS data if available
+                    if (truck.current_lat && truck.current_lng) {
+                        infoContent += `
+                            <div style="background:#f8fafc;padding:8px;border-radius:6px;margin-bottom:10px">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                                    <span style="font-size:0.75rem;color:#64748b">📡 Live GPS</span>
+                                    ${isMoving ? '<span style="font-size:0.7rem;color:#10B981;font-weight:600">● MOVING</span>' : '<span style="font-size:0.7rem;color:#94a3b8">● STOPPED</span>'}
+                                </div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:0.78rem">
+                                    <div style="text-align:center">
+                                        <div style="font-weight:700;color:#333">${truck.current_speed ? Math.round(truck.current_speed) + ' mph' : '0 mph'}</div>
+                                        <div style="color:#888;font-size:0.65rem">Speed</div>
+                                    </div>
+                                    <div style="text-align:center">
+                                        <div style="font-weight:700;color:#333">${truck.current_heading ? truck.current_heading + '°' : '-'}</div>
+                                        <div style="color:#888;font-size:0.65rem">Heading</div>
+                                    </div>
+                                    <div style="text-align:center">
+                                        <div style="font-weight:700;color:#333">${truck.current_odometer ? truck.current_odometer.toLocaleString() : '-'}</div>
+                                        <div style="color:#888;font-size:0.65rem">Odometer</div>
+                                    </div>
+                                </div>
+                                ${truck.last_location_update ? `<div style="font-size:0.65rem;color:#94a3b8;margin-top:4px;text-align:center">Updated: ${new Date(truck.last_location_update).toLocaleTimeString()}</div>` : ''}
+                            </div>`;
+                    } else if (atDC) {
+                        infoContent += `<div style="font-size:0.75rem;color:#888;margin-bottom:8px;padding:6px 8px;background:#f1f5f9;border-radius:4px;text-align:center">📍 Parked at Distribution Center (no GPS signal)</div>`;
+                    }
+
+                    // Truck specs
+                    infoContent += `
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;font-size:0.78rem">
+                            <div style="background:#f0f0f5;padding:6px;border-radius:4px;text-align:center">
+                                <div style="font-weight:700;color:#6366F1">${(truck.capacity_gallons || 0).toLocaleString()}</div>
+                                <div style="color:#888;font-size:0.65rem">Capacity (gal)</div>
+                            </div>
+                            <div style="background:#f0f5f0;padding:6px;border-radius:4px;text-align:center">
+                                <div style="font-weight:700;color:#10B981">${truck.mpg || truck.avg_mpg || '-'}</div>
+                                <div style="color:#888;font-size:0.65rem">MPG</div>
+                            </div>
+                            <div style="background:#fffbf0;padding:6px;border-radius:4px;text-align:center">
+                                <div style="font-weight:700;color:#F59E0B">${truck.license_plate || '-'}</div>
+                                <div style="color:#888;font-size:0.65rem">Plate</div>
+                            </div>
+                        </div>`;
+
+                    // Driver section
+                    if (assignedDriver) {
+                        infoContent += `
+                            <div style="background:#eff6ff;padding:10px;border-radius:6px;margin-bottom:10px">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <div style="width:36px;height:36px;background:#3b82f6;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:0.9rem">${(assignedDriver.name || 'D').charAt(0)}</div>
+                                    <div style="flex:1">
+                                        <div style="font-weight:600;font-size:0.9rem;color:#1e40af">${assignedDriver.name}</div>
+                                        <div style="font-size:0.72rem;color:#64748b">${assignedDriver.phone || 'No phone'}</div>
+                                    </div>
+                                    <div style="text-align:right">
+                                        ${assignedDriver.hazmat_certified ? '<span style="font-size:0.65rem;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:3px;font-weight:600">HAZMAT</span>' : ''}
+                                    </div>
+                                </div>
+                                <div style="display:flex;gap:4px;margin-top:8px;font-size:0.7rem">
+                                    <span style="background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:3px">CDL: ${assignedDriver.cdl_class || '-'}</span>
+                                    <span style="background:#e0e7ff;color:#4338ca;padding:2px 6px;border-radius:3px">Exp: ${assignedDriver.years_experience || 0} yrs</span>
+                                    ${assignedDriver.tanker_endorsed ? '<span style="background:#d1fae5;color:#065f46;padding:2px 6px;border-radius:3px">Tanker</span>' : ''}
+                                </div>
+                            </div>`;
+                    } else {
+                        infoContent += `<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:10px;padding:8px;background:#f8fafc;border-radius:4px;text-align:center">👤 No driver assigned</div>`;
+                    }
+
+                    // Active route section
+                    if (activeRoute) {
+                        const progress = activeRoute.total_stops > 0 ? Math.round((activeRoute.stops_completed || 0) / activeRoute.total_stops * 100) : 0;
+                        const routeStatusColor = activeRoute.status === 'in_progress' ? '#10B981' : '#F59E0B';
+                        infoContent += `
+                            <div style="background:linear-gradient(135deg, #f0fdf4, #ecfdf5);padding:10px;border-radius:6px;margin-bottom:10px;border:1px solid #bbf7d0">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                                    <span style="font-weight:700;font-size:0.85rem;color:#166534">🚀 ${activeRoute.name || 'Active Route'}</span>
+                                    <span style="font-size:0.7rem;padding:2px 8px;border-radius:4px;font-weight:600;background:${activeRoute.status === 'in_progress' ? '#dcfce7' : '#fef9c3'};color:${routeStatusColor}">${activeRoute.status === 'in_progress' ? 'IN PROGRESS' : 'SCHEDULED'}</span>
+                                </div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:0.75rem;margin-bottom:8px">
+                                    <div style="text-align:center">
+                                        <div style="font-weight:700;color:#166534">${activeRoute.stops_completed || 0}/${activeRoute.total_stops || 0}</div>
+                                        <div style="color:#6b7280;font-size:0.65rem">Stops</div>
+                                    </div>
+                                    <div style="text-align:center">
+                                        <div style="font-weight:700;color:#166534">${activeRoute.total_gallons_delivered || 0}</div>
+                                        <div style="color:#6b7280;font-size:0.65rem">Gal Delivered</div>
+                                    </div>
+                                    <div style="text-align:center">
+                                        <div style="font-weight:700;color:#166534">$${(activeRoute.total_revenue || 0).toLocaleString()}</div>
+                                        <div style="color:#6b7280;font-size:0.65rem">Revenue</div>
+                                    </div>
+                                </div>
+                                <div style="background:#e5e7eb;height:6px;border-radius:3px;overflow:hidden">
+                                    <div style="background:linear-gradient(90deg, #22c55e, #16a34a);height:100%;width:${progress}%;transition:width 0.3s"></div>
+                                </div>
+                                <div style="font-size:0.7rem;color:#6b7280;margin-top:4px;text-align:center">${progress}% Complete</div>
+                            </div>`;
+                    } else {
+                        infoContent += `<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:10px;padding:8px;background:#f8fafc;border-radius:4px;text-align:center">📋 No active route assigned</div>`;
+                    }
+
+                    // DC info
+                    if (truck.dc_name) {
+                        infoContent += `<div style="font-size:0.8rem;color:#555;margin-bottom:10px">🏭 <strong>${truck.dc_name}</strong></div>`;
+                    }
+
+                    // Action buttons
+                    infoContent += `
+                        <div style="display:flex;gap:6px;border-top:1px solid #e5e7eb;padding-top:10px">
+                            <button id="truck-detail-btn-${trkIdx}" style="flex:1;background:#334155;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">📋 Truck</button>
+                            ${assignedDriver ? `<button id="driver-detail-btn-${trkIdx}" style="flex:1;background:#3b82f6;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">👤 Driver</button>` : ''}
+                            ${activeRoute ? `<button id="route-detail-btn-${trkIdx}" style="flex:1;background:#10B981;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">🗺️ Route</button>` : ''}
+                        </div>`;
+
+                    infoContent += `</div>`;
+
+                    const infoWindow = new google.maps.InfoWindow({ content: infoContent });
 
                     marker.addListener('click', () => infoWindow.open(map, marker));
                     google.maps.event.addListener(infoWindow, 'domready', () => {
                         document.getElementById(`truck-detail-btn-${trkIdx}`)?.addEventListener('click', () => { infoWindow.close(); if (onNavigate) onNavigate('trucks'); });
+                        document.getElementById(`driver-detail-btn-${trkIdx}`)?.addEventListener('click', () => { infoWindow.close(); if (onNavigate) onNavigate('drivers'); });
+                        document.getElementById(`route-detail-btn-${trkIdx}`)?.addEventListener('click', () => { infoWindow.close(); if (onNavigate) onNavigate('active-routes'); });
                     });
 
                     markersRef.current.push(marker);
@@ -5184,6 +5310,379 @@
                         </div>
                     )}
                 </>
+            );
+        }
+
+        // =====================================================
+        // INTEGRATIONS VIEW - Fleetmatics / Telematics
+        // =====================================================
+        function IntegrationsView({ data, onRefresh }) {
+            const [loading, setLoading] = useState(true);
+            const [fleetmaticsStatus, setFleetmaticsStatus] = useState(null);
+            const [vehicles, setVehicles] = useState([]);
+            const [showConnectModal, setShowConnectModal] = useState(false);
+            const [showLinkModal, setShowLinkModal] = useState(null);
+            const [credentials, setCredentials] = useState({ username: '', password: '', api_key: '' });
+            const [connecting, setConnecting] = useState(false);
+            const [syncing, setSyncing] = useState(false);
+            const [error, setError] = useState('');
+            const [successMsg, setSuccessMsg] = useState('');
+
+            useEffect(() => {
+                loadFleetmaticsStatus();
+            }, []);
+
+            const loadFleetmaticsStatus = async () => {
+                setLoading(true);
+                try {
+                    const status = await api.request('/fleetmatics/status');
+                    setFleetmaticsStatus(status);
+                    
+                    if (status.enabled) {
+                        const vehicleData = await api.request('/fleetmatics/vehicles');
+                        setVehicles(vehicleData.vehicles || []);
+                    }
+                } catch (err) {
+                    console.log('Fleetmatics not configured:', err.message);
+                    setFleetmaticsStatus({ enabled: false, connected: false });
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleConnect = async () => {
+                if (!credentials.username || !credentials.password) {
+                    setError('Username and password are required');
+                    return;
+                }
+                
+                setConnecting(true);
+                setError('');
+                
+                try {
+                    const result = await api.request('/fleetmatics/connect', {
+                        method: 'POST',
+                        body: JSON.stringify(credentials)
+                    });
+                    
+                    setSuccessMsg('Connected successfully! ' + (result.vehicles_synced || 0) + ' vehicles synced.');
+                    setShowConnectModal(false);
+                    setCredentials({ username: '', password: '', api_key: '' });
+                    loadFleetmaticsStatus();
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setConnecting(false);
+                }
+            };
+
+            const handleDisconnect = async () => {
+                if (!confirm('Disconnect from Verizon Connect? This will unlink all trucks from telematics tracking.')) return;
+                
+                try {
+                    await api.request('/fleetmatics/disconnect', { method: 'DELETE' });
+                    setSuccessMsg('Disconnected from Verizon Connect');
+                    setFleetmaticsStatus({ enabled: false, connected: false });
+                    setVehicles([]);
+                } catch (err) {
+                    setError(err.message);
+                }
+            };
+
+            const handleSync = async () => {
+                setSyncing(true);
+                setError('');
+                
+                try {
+                    const result = await api.request('/fleetmatics/sync', { method: 'POST' });
+                    setSuccessMsg(`Sync complete! ${result.vehicles_updated} trucks updated.`);
+                    loadFleetmaticsStatus();
+                    onRefresh();
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setSyncing(false);
+                }
+            };
+
+            const handleLinkTruck = async (truckId, vehicleId) => {
+                try {
+                    await api.request('/fleetmatics/link-truck', {
+                        method: 'POST',
+                        body: JSON.stringify({ truck_id: truckId, fleetmatics_vehicle_id: vehicleId })
+                    });
+                    setSuccessMsg('Truck linked to vehicle');
+                    setShowLinkModal(null);
+                    onRefresh();
+                } catch (err) {
+                    setError(err.message);
+                }
+            };
+
+            if (loading) {
+                return <div className="loading"><div className="spinner"></div><div>Loading integrations...</div></div>;
+            }
+
+            return (
+                <div className="content-area">
+                    <div className="content-header">
+                        <h2>🔗 Integrations</h2>
+                    </div>
+
+                    {error && <div className="error-message" style={{marginBottom:'1rem'}}>{error}</div>}
+                    {successMsg && <div style={{background:'rgba(16,185,129,0.2)',border:'1px solid var(--success)',padding:'1rem',borderRadius:'8px',marginBottom:'1rem',color:'var(--success)'}}>{successMsg}</div>}
+
+                    {/* Verizon Connect / Fleetmatics Card */}
+                    <div className="card" style={{marginBottom:'1.5rem'}}>
+                        <div className="card-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                                <div style={{width:'48px',height:'48px',background:'linear-gradient(135deg, #c8102e, #000)',borderRadius:'8px',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontWeight:'bold',fontSize:'0.7rem'}}>
+                                    VERIZON
+                                </div>
+                                <div>
+                                    <h3 style={{margin:0}}>Verizon Connect (Fleetmatics)</h3>
+                                    <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Real-time GPS tracking & telematics</div>
+                                </div>
+                            </div>
+                            <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                                {fleetmaticsStatus?.enabled ? (
+                                    <span style={{background:'rgba(16,185,129,0.2)',color:'var(--success)',padding:'0.25rem 0.75rem',borderRadius:'999px',fontSize:'0.85rem'}}>✓ Connected</span>
+                                ) : (
+                                    <span style={{background:'rgba(107,114,128,0.2)',color:'var(--text-muted)',padding:'0.25rem 0.75rem',borderRadius:'999px',fontSize:'0.85rem'}}>Not Connected</span>
+                                )}
+                            </div>
+                        </div>
+                        <div className="card-body">
+                            {fleetmaticsStatus?.enabled ? (
+                                <>
+                                    <div style={{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',gap:'1rem',marginBottom:'1.5rem'}}>
+                                        <div style={{background:'var(--bg-dark)',padding:'1rem',borderRadius:'8px',textAlign:'center'}}>
+                                            <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Vehicles</div>
+                                            <div style={{fontSize:'1.5rem',fontWeight:'700',color:'var(--primary)'}}>{fleetmaticsStatus.vehicle_count || 0}</div>
+                                        </div>
+                                        <div style={{background:'var(--bg-dark)',padding:'1rem',borderRadius:'8px',textAlign:'center'}}>
+                                            <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Linked Trucks</div>
+                                            <div style={{fontSize:'1.5rem',fontWeight:'700',color:'var(--success)'}}>{data.trucks?.filter(t => t.fleetmatics_vehicle_id).length || 0}</div>
+                                        </div>
+                                        <div style={{background:'var(--bg-dark)',padding:'1rem',borderRadius:'8px',textAlign:'center'}}>
+                                            <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Username</div>
+                                            <div style={{fontSize:'0.9rem',fontWeight:'600',color:'var(--text-primary)'}}>{fleetmaticsStatus.username}</div>
+                                        </div>
+                                        <div style={{background:'var(--bg-dark)',padding:'1rem',borderRadius:'8px',textAlign:'center'}}>
+                                            <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Last Sync</div>
+                                            <div style={{fontSize:'0.9rem',fontWeight:'600',color:'var(--text-primary)'}}>{fleetmaticsStatus.last_sync ? new Date(fleetmaticsStatus.last_sync).toLocaleString() : 'Never'}</div>
+                                        </div>
+                                    </div>
+
+                                    <div style={{display:'flex',gap:'0.5rem',marginBottom:'1.5rem'}}>
+                                        <button className="btn btn-primary" onClick={handleSync} disabled={syncing}>
+                                            {syncing ? <><span className="spinner" style={{marginRight:'0.5rem'}}></span>Syncing...</> : '🔄 Sync Now'}
+                                        </button>
+                                        <button className="btn btn-secondary" onClick={handleDisconnect}>Disconnect</button>
+                                    </div>
+
+                                    {/* Vehicles from Verizon */}
+                                    <h4 style={{marginBottom:'1rem'}}>Verizon Vehicles</h4>
+                                    <div className="table-container" style={{maxHeight:'400px',overflowY:'auto'}}>
+                                        <table className="data-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Vehicle</th>
+                                                    <th>VIN</th>
+                                                    <th>Plate</th>
+                                                    <th>Status</th>
+                                                    <th>Speed</th>
+                                                    <th>Location</th>
+                                                    <th>Linked Truck</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {vehicles.length === 0 ? (
+                                                    <tr><td colSpan="8" style={{textAlign:'center',padding:'2rem',color:'var(--text-muted)'}}>No vehicles found</td></tr>
+                                                ) : vehicles.map(v => {
+                                                    const linkedTruck = data.trucks?.find(t => t.fleetmatics_vehicle_id === v.id);
+                                                    return (
+                                                        <tr key={v.id}>
+                                                            <td><strong>{v.name}</strong><br/><small className="text-muted">{v.make} {v.model} {v.year}</small></td>
+                                                            <td style={{fontSize:'0.85rem'}}>{v.vin || '-'}</td>
+                                                            <td>{v.license_plate || '-'}</td>
+                                                            <td>
+                                                                <span className={`badge badge-${v.status === 'moving' ? 'success' : v.status === 'idle' ? 'warning' : 'secondary'}`}>
+                                                                    {v.status || 'unknown'}
+                                                                </span>
+                                                            </td>
+                                                            <td>{v.last_location?.speed ? `${Math.round(v.last_location.speed)} mph` : '-'}</td>
+                                                            <td style={{fontSize:'0.85rem'}}>
+                                                                {v.last_location?.lat ? `${v.last_location.lat.toFixed(4)}, ${v.last_location.lng.toFixed(4)}` : '-'}
+                                                            </td>
+                                                            <td>
+                                                                {linkedTruck ? (
+                                                                    <span style={{color:'var(--success)'}}>✓ {linkedTruck.code}</span>
+                                                                ) : (
+                                                                    <span style={{color:'var(--text-muted)'}}>Not linked</span>
+                                                                )}
+                                                            </td>
+                                                            <td>
+                                                                <button className="btn btn-sm btn-secondary" onClick={() => setShowLinkModal(v)}>
+                                                                    {linkedTruck ? 'Change' : 'Link'}
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </>
+                            ) : (
+                                <div style={{textAlign:'center',padding:'2rem'}}>
+                                    <div style={{fontSize:'3rem',marginBottom:'1rem'}}>📡</div>
+                                    <h4>Connect to Verizon Connect</h4>
+                                    <p style={{color:'var(--text-muted)',marginBottom:'1.5rem',maxWidth:'500px',margin:'0 auto 1.5rem'}}>
+                                        Enable real-time GPS tracking for your fleet. Monitor truck locations, speed, idle time, and receive alerts directly in RouteCRMPro.
+                                    </p>
+                                    <button className="btn btn-primary" onClick={() => setShowConnectModal(true)}>
+                                        🔗 Connect Verizon Account
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Future integrations placeholder */}
+                    <div className="card" style={{opacity:0.6}}>
+                        <div className="card-header">
+                            <h3>🔌 More Integrations Coming Soon</h3>
+                        </div>
+                        <div className="card-body">
+                            <div style={{display:'grid',gridTemplateColumns:'repeat(3, 1fr)',gap:'1rem'}}>
+                                <div style={{background:'var(--bg-dark)',padding:'1.5rem',borderRadius:'8px',textAlign:'center'}}>
+                                    <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>🛰️</div>
+                                    <div style={{fontWeight:'600'}}>Samsara</div>
+                                    <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Coming soon</div>
+                                </div>
+                                <div style={{background:'var(--bg-dark)',padding:'1.5rem',borderRadius:'8px',textAlign:'center'}}>
+                                    <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>📍</div>
+                                    <div style={{fontWeight:'600'}}>Geotab</div>
+                                    <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Coming soon</div>
+                                </div>
+                                <div style={{background:'var(--bg-dark)',padding:'1.5rem',borderRadius:'8px',textAlign:'center'}}>
+                                    <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>💳</div>
+                                    <div style={{fontWeight:'600'}}>QuickBooks</div>
+                                    <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Coming soon</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Connect Modal */}
+                    {showConnectModal && (
+                        <div className="modal-overlay" onClick={() => setShowConnectModal(false)}>
+                            <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'450px'}}>
+                                <div className="modal-header">
+                                    <h3>Connect to Verizon Connect</h3>
+                                    <button className="modal-close" onClick={() => setShowConnectModal(false)}>×</button>
+                                </div>
+                                <div className="modal-body">
+                                    <p style={{color:'var(--text-muted)',marginBottom:'1.5rem',fontSize:'0.9rem'}}>
+                                        Enter your Verizon Connect (Fleetmatics) API credentials. You can find these in your Verizon Connect admin portal under API Settings.
+                                    </p>
+                                    
+                                    <div className="form-group">
+                                        <label className="form-label">Username *</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-input" 
+                                            value={credentials.username}
+                                            onChange={e => setCredentials({...credentials, username: e.target.value})}
+                                            placeholder="API username"
+                                        />
+                                    </div>
+                                    
+                                    <div className="form-group">
+                                        <label className="form-label">Password *</label>
+                                        <input 
+                                            type="password" 
+                                            className="form-input" 
+                                            value={credentials.password}
+                                            onChange={e => setCredentials({...credentials, password: e.target.value})}
+                                            placeholder="API password"
+                                        />
+                                    </div>
+                                    
+                                    <div className="form-group">
+                                        <label className="form-label">API Key (optional)</label>
+                                        <input 
+                                            type="text" 
+                                            className="form-input" 
+                                            value={credentials.api_key}
+                                            onChange={e => setCredentials({...credentials, api_key: e.target.value})}
+                                            placeholder="Optional API key"
+                                        />
+                                    </div>
+
+                                    {error && <div className="error-message">{error}</div>}
+                                </div>
+                                <div className="modal-footer">
+                                    <button className="btn btn-secondary" onClick={() => setShowConnectModal(false)}>Cancel</button>
+                                    <button className="btn btn-primary" onClick={handleConnect} disabled={connecting}>
+                                        {connecting ? <><span className="spinner" style={{marginRight:'0.5rem'}}></span>Connecting...</> : 'Connect'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Link Truck Modal */}
+                    {showLinkModal && (
+                        <div className="modal-overlay" onClick={() => setShowLinkModal(null)}>
+                            <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'450px'}}>
+                                <div className="modal-header">
+                                    <h3>Link Truck to Vehicle</h3>
+                                    <button className="modal-close" onClick={() => setShowLinkModal(null)}>×</button>
+                                </div>
+                                <div className="modal-body">
+                                    <p style={{marginBottom:'1rem'}}>
+                                        <strong>Verizon Vehicle:</strong> {showLinkModal.name}
+                                        <br/><small className="text-muted">{showLinkModal.make} {showLinkModal.model} - {showLinkModal.license_plate}</small>
+                                    </p>
+                                    
+                                    <div className="form-group">
+                                        <label className="form-label">Select Truck to Link</label>
+                                        <select 
+                                            className="form-input"
+                                            onChange={e => {
+                                                if (e.target.value) {
+                                                    handleLinkTruck(e.target.value, showLinkModal.id);
+                                                }
+                                            }}
+                                            defaultValue=""
+                                        >
+                                            <option value="">Select a truck...</option>
+                                            {data.trucks?.filter(t => !t.fleetmatics_vehicle_id || t.fleetmatics_vehicle_id === showLinkModal.id).map(t => (
+                                                <option key={t.id} value={t.id}>{t.code} - {t.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    {data.trucks?.find(t => t.fleetmatics_vehicle_id === showLinkModal.id) && (
+                                        <button 
+                                            className="btn btn-secondary btn-block" 
+                                            style={{marginTop:'1rem'}}
+                                            onClick={() => handleLinkTruck(data.trucks.find(t => t.fleetmatics_vehicle_id === showLinkModal.id).id, null)}
+                                        >
+                                            Unlink Current Truck
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="modal-footer">
+                                    <button className="btn btn-secondary" onClick={() => setShowLinkModal(null)}>Close</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
             );
         }
 
