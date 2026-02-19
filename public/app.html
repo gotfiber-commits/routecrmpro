@@ -476,7 +476,23 @@
                     localStorage.removeItem('token');
                 }
             },
-            setTenant(t) { this.tenant = t; },
+            setTenant(t) { 
+                this.tenant = t; 
+                if (t) {
+                    localStorage.setItem('tenant', t);
+                }
+            },
+            getTenant() {
+                if (this.tenant) return this.tenant;
+                // Try URL first, then localStorage
+                const urlTenant = new URLSearchParams(window.location.search).get('tenant');
+                if (urlTenant) {
+                    this.tenant = urlTenant;
+                    localStorage.setItem('tenant', urlTenant);
+                    return urlTenant;
+                }
+                return localStorage.getItem('tenant') || '';
+            },
             async request(endpoint, options = {}) {
                 // Ensure we have a token for protected endpoints
                 if (!this.token && !endpoint.includes('/auth/')) {
@@ -486,7 +502,8 @@
                     }
                 }
                 
-                const url = `/.netlify/functions${endpoint}${endpoint.includes('?') ? '&' : '?'}tenant=${this.tenant}`;
+                const tenant = this.getTenant();
+                const url = `/.netlify/functions${endpoint}${endpoint.includes('?') ? '&' : '?'}tenant=${tenant}`;
                 
                 try {
                     const res = await fetch(url, {
@@ -515,7 +532,7 @@
             }
         };
 
-        const getTenant = () => new URLSearchParams(window.location.search).get('tenant') || '';
+        const getTenant = () => api.getTenant();
 
         // =====================================================
         // Login Screen
@@ -5879,7 +5896,11 @@
                 localStorage.removeItem('authToken');
                 localStorage.removeItem('user');
                 localStorage.removeItem('company');
+                localStorage.removeItem('tenant');
+                localStorage.removeItem('companyId');
+                localStorage.removeItem('companyName');
                 api.setToken(null);
+                api.tenant = null;
                 setUser(null);
                 setCompany(null);
             };
@@ -5942,6 +5963,9 @@
             const handleLogin = (data) => {
                 if (data?.user && data?.company && data?.token) {
                     api.setToken(data.token);
+                    if (data.company.subdomain) {
+                        api.setTenant(data.company.subdomain);
+                    }
                     setUser(data.user);
                     setCompany(data.company);
                     localStorage.setItem('user', JSON.stringify(data.user));

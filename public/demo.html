@@ -204,11 +204,11 @@
                 // Store token and user data
                 localStorage.setItem('token', data.token);
                 localStorage.setItem('user', JSON.stringify(data.user));
-                localStorage.setItem('companyId', data.companyId);
-                localStorage.setItem('companyName', data.companyName || 'Southeast Propane Distribution');
+                localStorage.setItem('tenant', 'demo');
+                localStorage.setItem('company', JSON.stringify(data.company));
                 
-                // Redirect to main app
-                window.location.href = '/app.html';
+                // Redirect to main app with tenant parameter
+                window.location.href = '/app.html?tenant=demo';
                 
             } catch (err) {
                 console.error('Demo login error:', err);

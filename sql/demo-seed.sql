@@ -23,20 +23,16 @@ VALUES (
 );
 
 -- =====================================================
--- 2. CREATE DEMO ADMIN USER
--- Password: admin123
+-- 2. DEMO USER - IMPORTANT!
 -- =====================================================
-INSERT INTO users (id, company_id, username, email, password_hash, name, role, status)
-VALUES (
-    'de000000-0000-0000-0000-000000000010',
-    'de000000-0000-0000-0000-000000000001',
-    'demo',
-    'demo@southeastpropane.com',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZRGdjGj/n3.rjViVaRF1tpBRiC1S2',
-    'Demo Administrator',
-    'admin',
-    'active'
-);
+-- The demo user is NOT created by this SQL file.
+-- You MUST run the setup-demo endpoint after this SQL:
+--
+--   https://yoursite.netlify.app/.netlify/functions/auth/setup-demo
+--
+-- This creates: username=demo, password=admin123
+-- The endpoint generates a proper bcrypt hash at runtime.
+-- =====================================================
 
 -- =====================================================
 -- 3. CREATE 3 DISTRIBUTION CENTERS
