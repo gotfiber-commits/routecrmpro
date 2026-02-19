@@ -19,22 +19,13 @@ exports.handler = async (event, context) => {
     const method = event.httpMethod;
 
     try {
-        // Resolve tenant
-        const tenant = await resolveTenant(event);
-        if (!tenant.resolved) {
-            return error('Company not found', 404);
-        }
-        const companyId = tenant.company.id;
-
-        // Auth required
+        // Auth required first
         const authResult = requireAuth(event);
         if (authResult.error) {
             return error(authResult.error, authResult.status);
         }
-
-        if (authResult.user.companyId !== companyId) {
-            return error('Unauthorized', 403);
-        }
+        
+        const companyId = authResult.user.companyId;
 
         // POST /optimize-route - Optimize a set of stops
         if (method === 'POST' && path === '') {

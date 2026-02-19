@@ -15,22 +15,20 @@ exports.handler = async (event, context) => {
     const method = event.httpMethod;
 
     try {
-        // Resolve tenant
-        const tenant = await resolveTenant(event);
-        if (!tenant.resolved) {
-            return error('Company not found', 404);
-        }
-        const companyId = tenant.company.id;
-
-        // Auth required
+        // Auth required first
         const authResult = requireAuth(event);
         if (authResult.error) {
             return error(authResult.error, authResult.status);
         }
-
         const user = authResult.user;
-        if (user.companyId !== companyId) {
-            return error('Unauthorized', 403);
+
+        // Get companyId - prefer from token, fallback to tenant resolution
+        let companyId = user.companyId;
+        
+        // Optionally verify tenant matches token (if provided)
+        const tenant = await resolveTenant(event);
+        if (tenant.resolved && tenant.company.id !== companyId) {
+            return error('Unauthorized - company mismatch', 403);
         }
 
         // Route Templates

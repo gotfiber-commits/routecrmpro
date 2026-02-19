@@ -17,23 +17,13 @@ exports.handler = async (event, context) => {
     const method = event.httpMethod;
 
     try {
-        // Resolve tenant
-        const tenant = await resolveTenant(event);
-        if (!tenant.resolved) {
-            return error('Company not found', 404);
-        }
-        const companyId = tenant.company.id;
-
         // Auth required for all billing routes
         const authResult = requireAuth(event);
         if (authResult.error) {
             return error(authResult.error, authResult.status);
         }
 
-        // Verify user belongs to this company and is admin
-        if (authResult.user.companyId !== companyId) {
-            return error('Unauthorized', 403);
-        }
+        const companyId = authResult.user.companyId;
 
         // GET /tenant-billing - Get billing overview
         if (method === 'GET' && path === '') {
