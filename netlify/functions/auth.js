@@ -308,6 +308,56 @@ async function getCurrentUser(event) {
         dcInfo = dcResult.rows[0] || null;
     }
 
+    // Get driver info if user is linked to a driver
+    let driverInfo = null;
+    let truckInfo = null;
+    if (user.driver_id) {
+        const driverResult = await query(
+            `SELECT d.*, dc.name as dc_name, dc.code as dc_code
+             FROM drivers d
+             LEFT JOIN distribution_centers dc ON d.dc_id = dc.id
+             WHERE d.id = $1`,
+            [user.driver_id]
+        );
+        if (driverResult.rows.length > 0) {
+            const driver = driverResult.rows[0];
+            driverInfo = {
+                id: driver.id,
+                code: driver.code,
+                name: driver.name,
+                phone: driver.phone,
+                cdlClass: driver.cdl_class,
+                hazmatCertified: driver.hazmat_certified,
+                dcId: driver.dc_id,
+                dcName: driver.dc_name,
+                dcCode: driver.dc_code
+            };
+
+            // Get assigned truck
+            const truckResult = await query(
+                `SELECT t.*, dc.name as dc_name
+                 FROM trucks t
+                 LEFT JOIN distribution_centers dc ON t.dc_id = dc.id
+                 WHERE t.assigned_driver_id = $1 AND t.status = 'active'`,
+                [user.driver_id]
+            );
+            if (truckResult.rows.length > 0) {
+                const truck = truckResult.rows[0];
+                truckInfo = {
+                    id: truck.id,
+                    code: truck.code,
+                    name: truck.name,
+                    make: truck.make,
+                    model: truck.model,
+                    year: truck.year,
+                    licensePlate: truck.license_plate,
+                    capacityGallons: truck.capacity_gallons,
+                    currentOdometer: truck.current_odometer
+                };
+            }
+        }
+    }
+
     return success({
         user: {
             id: user.id,
@@ -326,7 +376,9 @@ async function getCurrentUser(event) {
             subdomain: user.subdomain,
             plan: user.plan
         },
-        dc: dcInfo
+        dc: dcInfo,
+        driver: driverInfo,
+        truck: truckInfo
     });
 }
 

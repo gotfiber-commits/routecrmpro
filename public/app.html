@@ -7670,6 +7670,656 @@
         }
 
         // =====================================================
+        // DRIVER MOBILE DASHBOARD
+        // Shown automatically when user.role === 'driver'
+        // =====================================================
+        function DriverDashboard({ user, company, onLogout }) {
+            const [driverInfo, setDriverInfo] = useState(null);
+            const [truckInfo, setTruckInfo] = useState(null);
+            const [routes, setRoutes] = useState([]);
+            const [selectedRoute, setSelectedRoute] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [toast, setToast] = useState(null);
+
+            useEffect(() => {
+                loadDriverData();
+            }, []);
+
+            const loadDriverData = async () => {
+                try {
+                    setLoading(true);
+                    const data = await api.request('/routes-v2/my-routes');
+                    setRoutes(data.routes || []);
+                    if (data.driver) setDriverInfo(data.driver);
+                    if (data.truck) setTruckInfo(data.truck);
+                } catch (err) {
+                    if (err.message.includes('No driver profile')) {
+                        showToast('Your account is not linked to a driver profile. Contact your dispatcher.', 'error');
+                    } else {
+                        showToast(err.message, 'error');
+                    }
+                    setRoutes([]);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const showToast = (message, type = 'success') => {
+                setToast({ message, type });
+                setTimeout(() => setToast(null), 4000);
+            };
+
+            // Mobile styles
+            const mobileStyles = `
+                .driver-app { min-height: 100vh; background: var(--bg-dark); }
+                .driver-header { background: var(--bg-card); padding: 1rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 100; }
+                .driver-header h1 { font-size: 1.25rem; display: flex; align-items: center; gap: 0.5rem; }
+                .driver-content { padding: 1rem; padding-bottom: 2rem; }
+                .driver-info-card { background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); border-radius: 16px; padding: 1rem; margin-bottom: 1rem; }
+                .driver-info-grid { display: flex; justify-content: space-between; }
+                .driver-info-label { font-size: 0.75rem; opacity: 0.8; }
+                .driver-info-value { font-size: 1.1rem; font-weight: 600; }
+                .driver-stats { display: flex; justify-content: space-around; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.2); }
+                .driver-stat { text-align: center; }
+                .driver-stat-value { font-size: 1.25rem; font-weight: 700; }
+                .driver-stat-label { font-size: 0.7rem; opacity: 0.8; }
+                .route-card { background: var(--bg-card); border-radius: 16px; padding: 1rem; margin-bottom: 0.75rem; cursor: pointer; border: 2px solid transparent; transition: all 0.2s; }
+                .route-card:active { border-color: var(--primary); transform: scale(0.98); }
+                .route-card.in-progress { border-color: var(--warning); }
+                .route-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; }
+                .route-card-name { font-size: 1.1rem; font-weight: 600; }
+                .route-card-date { font-size: 0.85rem; color: var(--text-muted); }
+                .route-card-stats { display: flex; gap: 1rem; font-size: 0.9rem; color: var(--text-secondary); }
+                .route-card-truck { margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
+                .status-badge { padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+                .status-badge.scheduled { background: rgba(99,102,241,0.2); color: var(--primary); }
+                .status-badge.in_progress { background: rgba(245,158,11,0.2); color: var(--warning); }
+                .no-routes { text-align: center; padding: 3rem 1rem; }
+                .no-routes-icon { font-size: 4rem; opacity: 0.5; margin-bottom: 1rem; }
+                .driver-toast { position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%); background: var(--bg-card); padding: 1rem 1.5rem; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 300; display: flex; align-items: center; gap: 0.75rem; }
+                .driver-toast.success { border-left: 4px solid var(--success); }
+                .driver-toast.error { border-left: 4px solid var(--danger); }
+                .icon-btn { width: 44px; height: 44px; border-radius: 12px; border: none; background: var(--bg-input); color: var(--text-primary); font-size: 1.25rem; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+                .icon-btn:active { background: var(--primary); }
+            `;
+
+            // Route Detail View
+            if (selectedRoute) {
+                return (
+                    <DriverRouteDetail 
+                        route={selectedRoute} 
+                        driverInfo={driverInfo}
+                        truckInfo={truckInfo}
+                        onBack={() => { setSelectedRoute(null); loadDriverData(); }}
+                        showToast={showToast}
+                    />
+                );
+            }
+
+            const activeRoutes = routes.filter(r => r.status === 'in_progress' || r.status === 'scheduled');
+
+            return (
+                <div className="driver-app">
+                    <style>{mobileStyles}</style>
+                    
+                    <div className="driver-header">
+                        <h1>🚚 {driverInfo?.name || user?.name || 'Driver'}</h1>
+                        <div style={{display:'flex',gap:'0.5rem'}}>
+                            <button className="icon-btn" onClick={loadDriverData}>↻</button>
+                            <button className="icon-btn" onClick={onLogout}>🚪</button>
+                        </div>
+                    </div>
+
+                    <div className="driver-content">
+                        {/* Driver & Truck Info */}
+                        {(driverInfo || truckInfo) && (
+                            <div className="driver-info-card">
+                                <div className="driver-info-grid">
+                                    <div>
+                                        <div className="driver-info-label">Driver</div>
+                                        <div className="driver-info-value">{driverInfo?.name || 'Not assigned'}</div>
+                                        {driverInfo?.dcName && <div style={{fontSize:'0.85rem',opacity:0.8,marginTop:'4px'}}>📍 {driverInfo.dcName}</div>}
+                                    </div>
+                                    {truckInfo && (
+                                        <div style={{textAlign:'right'}}>
+                                            <div className="driver-info-label">Truck</div>
+                                            <div className="driver-info-value">{truckInfo.code}</div>
+                                            <div style={{fontSize:'0.85rem',opacity:0.8,marginTop:'4px'}}>{truckInfo.make} {truckInfo.model}</div>
+                                        </div>
+                                    )}
+                                </div>
+                                {truckInfo && (
+                                    <div className="driver-stats">
+                                        <div className="driver-stat">
+                                            <div className="driver-stat-value">{truckInfo.capacityGallons || '—'}</div>
+                                            <div className="driver-stat-label">Capacity (gal)</div>
+                                        </div>
+                                        <div className="driver-stat">
+                                            <div className="driver-stat-value">{truckInfo.licensePlate || '—'}</div>
+                                            <div className="driver-stat-label">License</div>
+                                        </div>
+                                        <div className="driver-stat">
+                                            <div className="driver-stat-value">{truckInfo.currentOdometer?.toLocaleString() || '—'}</div>
+                                            <div className="driver-stat-label">Odometer</div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Routes List */}
+                        {loading ? (
+                            <div style={{textAlign:'center',padding:'3rem'}}>
+                                <div className="spinner"></div>
+                                <p style={{marginTop:'1rem',color:'var(--text-muted)'}}>Loading your routes...</p>
+                            </div>
+                        ) : activeRoutes.length === 0 ? (
+                            <div className="no-routes">
+                                <div className="no-routes-icon">📭</div>
+                                <h2>No Routes Assigned</h2>
+                                <p style={{color:'var(--text-secondary)'}}>You don't have any routes scheduled.</p>
+                                <button className="btn btn-primary" style={{marginTop:'1.5rem'}} onClick={loadDriverData}>↻ Refresh</button>
+                            </div>
+                        ) : (
+                            <>
+                                <h3 style={{marginBottom:'1rem'}}>Your Routes ({activeRoutes.length})</h3>
+                                {activeRoutes.map(route => (
+                                    <div 
+                                        key={route.id} 
+                                        className={`route-card ${route.status === 'in_progress' ? 'in-progress' : ''}`}
+                                        onClick={() => setSelectedRoute(route)}
+                                    >
+                                        <div className="route-card-header">
+                                            <div>
+                                                <div className="route-card-name">{route.name || `Route ${route.id.slice(0,8)}`}</div>
+                                                <div className="route-card-date">
+                                                    {new Date(route.scheduled_date).toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'})}
+                                                    {route.dc_name && <span> • {route.dc_name}</span>}
+                                                </div>
+                                            </div>
+                                            <span className={`status-badge ${route.status}`}>
+                                                {route.status === 'in_progress' ? 'In Progress' : 'Scheduled'}
+                                            </span>
+                                        </div>
+                                        <div className="route-card-stats">
+                                            <span>🛑 {route.total_stops} stops</span>
+                                            <span>✓ {route.stops_completed || 0} done</span>
+                                            <span>📏 {route.estimated_miles ? parseFloat(route.estimated_miles).toFixed(1) : '—'} mi</span>
+                                        </div>
+                                        {route.truck_code && (
+                                            <div className="route-card-truck">🚚 {route.truck_code}</div>
+                                        )}
+                                    </div>
+                                ))}
+                            </>
+                        )}
+                    </div>
+
+                    {toast && (
+                        <div className={`driver-toast ${toast.type}`}>
+                            {toast.type === 'success' ? '✓' : '✗'} {toast.message}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // Driver Route Detail Component
+        function DriverRouteDetail({ route, driverInfo, truckInfo, onBack, showToast }) {
+            const [routeData, setRouteData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [selectedStop, setSelectedStop] = useState(null);
+            const [expandedStop, setExpandedStop] = useState(null);
+
+            useEffect(() => {
+                loadRouteDetails();
+            }, [route.id]);
+
+            const loadRouteDetails = async () => {
+                try {
+                    setLoading(true);
+                    const data = await api.request(`/routes-v2/runs/${route.id}`);
+                    setRouteData(data);
+                } catch (err) {
+                    showToast(err.message, 'error');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const startRoute = async () => {
+                try {
+                    await api.request(`/routes-v2/runs/${route.id}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ status: 'in_progress' })
+                    });
+                    loadRouteDetails();
+                    showToast('Route started!', 'success');
+                } catch (err) {
+                    showToast(err.message, 'error');
+                }
+            };
+
+            const completeStop = async (stopId, data) => {
+                try {
+                    await api.request(`/routes-v2/runs/${route.id}/stops/${stopId}/complete`, {
+                        method: 'POST',
+                        body: JSON.stringify(data)
+                    });
+                    setSelectedStop(null);
+                    loadRouteDetails();
+                    showToast('Stop completed!', 'success');
+                } catch (err) {
+                    showToast(err.message, 'error');
+                }
+            };
+
+            const skipStop = async (stopId, reason) => {
+                try {
+                    await api.request(`/routes-v2/runs/${route.id}/stops/${stopId}/skip`, {
+                        method: 'POST',
+                        body: JSON.stringify({ reason })
+                    });
+                    setSelectedStop(null);
+                    loadRouteDetails();
+                    showToast('Stop skipped', 'success');
+                } catch (err) {
+                    showToast(err.message, 'error');
+                }
+            };
+
+            const navigateToStop = (stop) => {
+                const address = `${stop.address}, ${stop.city}, ${stop.state} ${stop.zip}`;
+                // Try Apple Maps first (iOS), fallback to Google Maps
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                const url = isIOS 
+                    ? `https://maps.apple.com/?daddr=${encodeURIComponent(address)}`
+                    : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+                window.open(url, '_blank');
+            };
+
+            const callCustomer = (phone) => {
+                if (phone) window.location.href = `tel:${phone}`;
+            };
+
+            if (loading) {
+                return (
+                    <div className="driver-app">
+                        <div style={{textAlign:'center',padding:'4rem'}}>
+                            <div className="spinner"></div>
+                            <p style={{marginTop:'1rem',color:'var(--text-muted)'}}>Loading route...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            const stops = routeData?.stops || [];
+            const completed = stops.filter(s => s.status === 'completed').length;
+            const pending = stops.filter(s => s.status === 'pending').length;
+            const progress = stops.length > 0 ? ((completed / stops.length) * 100) : 0;
+            const nextPendingStop = stops.find(s => s.status === 'pending');
+
+            const detailStyles = `
+                .route-detail { min-height: 100vh; background: var(--bg-dark); }
+                .route-detail-header { background: var(--bg-card); padding: 1rem; border-bottom: 1px solid var(--border-color); }
+                .route-summary-card { background: linear-gradient(135deg, var(--primary) 0%, #4f46e5 100%); border-radius: 16px; padding: 1rem; margin: 1rem; }
+                .route-progress { height: 8px; background: rgba(255,255,255,0.2); border-radius: 4px; margin-top: 1rem; overflow: hidden; }
+                .route-progress-fill { height: 100%; background: white; border-radius: 4px; transition: width 0.3s; }
+                .stop-card { background: var(--bg-card); border-radius: 16px; margin: 0 1rem 0.75rem; overflow: hidden; border: 2px solid transparent; }
+                .stop-card.current { border-color: var(--primary); box-shadow: 0 0 20px rgba(99,102,241,0.3); }
+                .stop-card.completed { opacity: 0.6; }
+                .stop-card.skipped { opacity: 0.5; }
+                .stop-header { display: flex; align-items: center; padding: 1rem; gap: 0.75rem; cursor: pointer; }
+                .stop-number { width: 44px; height: 44px; border-radius: 12px; background: var(--bg-input); display: flex; align-items: center; justify-content: center; font-size: 1.1rem; font-weight: 700; flex-shrink: 0; }
+                .stop-card.completed .stop-number { background: var(--success); }
+                .stop-card.skipped .stop-number { background: var(--warning); }
+                .stop-info { flex: 1; min-width: 0; }
+                .stop-customer { font-size: 1rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .stop-address { font-size: 0.85rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .stop-details { padding: 0 1rem 1rem; }
+                .stop-detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin-bottom: 1rem; }
+                .stop-detail-item { background: var(--bg-input); padding: 0.75rem; border-radius: 12px; text-align: center; }
+                .stop-detail-value { font-size: 1.25rem; font-weight: 700; }
+                .stop-detail-label { font-size: 0.7rem; color: var(--text-muted); }
+                .stop-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+                .complete-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 200; display: flex; align-items: flex-end; justify-content: center; padding: 1rem; }
+                .complete-modal-content { background: var(--bg-card); border-radius: 24px 24px 16px 16px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
+                .complete-modal-header { padding: 1.25rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+                .complete-modal-body { padding: 1.25rem; }
+                .complete-modal-footer { padding: 1rem 1.25rem; border-top: 1px solid var(--border-color); display: flex; gap: 0.75rem; }
+                .complete-modal-footer .btn { flex: 1; }
+                .tank-low { color: var(--danger); }
+                .tank-medium { color: var(--warning); }
+                .tank-ok { color: var(--success); }
+            `;
+
+            return (
+                <div className="route-detail">
+                    <style>{detailStyles}</style>
+                    
+                    <div className="route-detail-header">
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:'0.75rem'}}>
+                                <button className="icon-btn" onClick={onBack}>←</button>
+                                <div>
+                                    <h2 style={{fontSize:'1.1rem',margin:0}}>{routeData?.name || 'Route'}</h2>
+                                    <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>{routeData?.dc_name}</div>
+                                </div>
+                            </div>
+                            <button className="icon-btn" onClick={loadRouteDetails}>↻</button>
+                        </div>
+                    </div>
+
+                    {/* Route Summary */}
+                    <div className="route-summary-card">
+                        <div style={{display:'flex',justifyContent:'space-around',textAlign:'center'}}>
+                            <div>
+                                <div style={{fontSize:'1.5rem',fontWeight:'700'}}>{stops.length}</div>
+                                <div style={{fontSize:'0.75rem',opacity:0.85}}>Total</div>
+                            </div>
+                            <div>
+                                <div style={{fontSize:'1.5rem',fontWeight:'700'}}>{completed}</div>
+                                <div style={{fontSize:'0.75rem',opacity:0.85}}>Done</div>
+                            </div>
+                            <div>
+                                <div style={{fontSize:'1.5rem',fontWeight:'700'}}>{pending}</div>
+                                <div style={{fontSize:'0.75rem',opacity:0.85}}>Left</div>
+                            </div>
+                            <div>
+                                <div style={{fontSize:'1.5rem',fontWeight:'700'}}>{parseFloat(routeData?.total_gallons_delivered || 0).toFixed(0)}</div>
+                                <div style={{fontSize:'0.75rem',opacity:0.85}}>Gallons</div>
+                            </div>
+                        </div>
+                        <div className="route-progress">
+                            <div className="route-progress-fill" style={{width:`${progress}%`}}></div>
+                        </div>
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.8rem',marginTop:'0.5rem',opacity:0.9}}>
+                            <span>{progress.toFixed(0)}% Complete</span>
+                            <span>{routeData?.estimated_miles || '—'} miles</span>
+                        </div>
+                    </div>
+
+                    {/* Start Route / Navigate Button */}
+                    <div style={{padding:'0 1rem',marginBottom:'1rem'}}>
+                        {routeData?.status === 'scheduled' ? (
+                            <button className="btn btn-success btn-block" style={{padding:'1rem',fontSize:'1.1rem'}} onClick={startRoute}>
+                                🚀 Start Route
+                            </button>
+                        ) : nextPendingStop && (
+                            <button className="btn btn-primary btn-block" style={{padding:'1rem',fontSize:'1.1rem',background:'#4285F4'}} onClick={() => navigateToStop(nextPendingStop)}>
+                                🧭 Navigate to Next Stop
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Stops List */}
+                    <div style={{paddingBottom:'2rem'}}>
+                        <h3 style={{padding:'0 1rem',marginBottom:'0.75rem'}}>Stops</h3>
+                        {stops.map((stop) => {
+                            const isExpanded = expandedStop === stop.id;
+                            const isCurrent = stop.status === 'pending' && stop.id === nextPendingStop?.id;
+                            const tankLevel = stop.tank_level_before || 50;
+                            const tankClass = tankLevel <= 25 ? 'tank-low' : tankLevel <= 50 ? 'tank-medium' : 'tank-ok';
+
+                            return (
+                                <div key={stop.id} className={`stop-card ${stop.status} ${isCurrent ? 'current' : ''}`}>
+                                    <div className="stop-header" onClick={() => setExpandedStop(isExpanded ? null : stop.id)}>
+                                        <div className="stop-number">
+                                            {stop.status === 'completed' ? '✓' : stop.status === 'skipped' ? '⚠' : stop.stop_number}
+                                        </div>
+                                        <div className="stop-info">
+                                            <div className="stop-customer">{stop.customer_name}</div>
+                                            <div className="stop-address">{stop.address}, {stop.city}</div>
+                                        </div>
+                                        <span className={`status-badge ${stop.status}`} style={{fontSize:'0.7rem'}}>
+                                            {stop.status === 'completed' ? `${stop.gallons_delivered}g` : stop.status}
+                                        </span>
+                                    </div>
+
+                                    {isExpanded && (
+                                        <div className="stop-details">
+                                            <div className="stop-detail-grid">
+                                                <div className="stop-detail-item">
+                                                    <div className="stop-detail-value">{stop.tank_size_gallons}g</div>
+                                                    <div className="stop-detail-label">Tank</div>
+                                                </div>
+                                                <div className="stop-detail-item">
+                                                    <div className={`stop-detail-value ${tankClass}`}>{tankLevel}%</div>
+                                                    <div className="stop-detail-label">Level</div>
+                                                </div>
+                                                <div className="stop-detail-item">
+                                                    <div className="stop-detail-value">${stop.price_per_gallon || '—'}</div>
+                                                    <div className="stop-detail-label">$/Gal</div>
+                                                </div>
+                                            </div>
+
+                                            {stop.status === 'pending' && routeData?.status === 'in_progress' && (
+                                                <div className="stop-actions">
+                                                    <button className="btn btn-primary" style={{padding:'0.875rem'}} onClick={() => navigateToStop(stop)}>
+                                                        🧭 Navigate
+                                                    </button>
+                                                    <button className="btn btn-success" style={{padding:'0.875rem'}} onClick={() => setSelectedStop(stop)}>
+                                                        ✓ Complete
+                                                    </button>
+                                                </div>
+                                            )}
+
+                                            {stop.status === 'completed' && (
+                                                <div style={{background:'var(--bg-input)',padding:'0.75rem',borderRadius:'12px',fontSize:'0.9rem'}}>
+                                                    <div><strong>Delivered:</strong> {stop.gallons_delivered} gal</div>
+                                                    {stop.tank_level_after && <div><strong>After:</strong> {stop.tank_level_after}%</div>}
+                                                </div>
+                                            )}
+
+                                            {stop.status === 'skipped' && (
+                                                <div style={{background:'rgba(245,158,11,0.2)',padding:'0.75rem',borderRadius:'12px',fontSize:'0.9rem'}}>
+                                                    <strong>Reason:</strong> {stop.skip_reason || 'Not specified'}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Complete Stop Modal */}
+                    {selectedStop && (
+                        <CompleteStopModal
+                            stop={selectedStop}
+                            onComplete={(data) => completeStop(selectedStop.id, data)}
+                            onSkip={(reason) => skipStop(selectedStop.id, reason)}
+                            onClose={() => setSelectedStop(null)}
+                            onNavigate={() => navigateToStop(selectedStop)}
+                            onCall={() => callCustomer(selectedStop.phone)}
+                        />
+                    )}
+                </div>
+            );
+        }
+
+        // Complete Stop Modal (shared)
+        function CompleteStopModal({ stop, onComplete, onSkip, onClose, onNavigate, onCall }) {
+            const [gallons, setGallons] = useState('');
+            const [tankAfter, setTankAfter] = useState('');
+            const [notes, setNotes] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [showSkip, setShowSkip] = useState(false);
+            const [skipReason, setSkipReason] = useState('');
+
+            const estimatedGallons = Math.round(stop.tank_size_gallons * (1 - (stop.tank_level_before || 50) / 100));
+
+            const handleComplete = async () => {
+                if (!gallons || parseFloat(gallons) <= 0) {
+                    alert('Please enter gallons delivered');
+                    return;
+                }
+                setLoading(true);
+                await onComplete({
+                    gallons_delivered: parseFloat(gallons),
+                    tank_level_after: tankAfter ? parseInt(tankAfter) : null,
+                    notes
+                });
+                setLoading(false);
+            };
+
+            const handleSkip = async () => {
+                if (!skipReason.trim()) {
+                    alert('Please select a reason');
+                    return;
+                }
+                setLoading(true);
+                await onSkip(skipReason);
+                setLoading(false);
+            };
+
+            const modalStyles = `
+                .complete-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 200; display: flex; align-items: flex-end; justify-content: center; padding: 1rem; }
+                .complete-modal-content { background: var(--bg-card); border-radius: 24px 24px 16px 16px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; animation: slideUp 0.3s ease-out; }
+                @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+                .complete-modal-header { padding: 1.25rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+                .complete-modal-body { padding: 1.25rem; }
+                .complete-modal-footer { padding: 1rem 1.25rem; border-top: 1px solid var(--border-color); display: flex; gap: 0.75rem; }
+                .complete-modal-footer .btn { flex: 1; padding: 1rem; }
+                .quick-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1.25rem; }
+                .quick-action { background: var(--bg-input); padding: 1rem; border-radius: 12px; text-align: center; border: none; color: var(--text-primary); cursor: pointer; }
+                .quick-action:active { background: var(--primary); }
+                .quick-action-icon { font-size: 1.5rem; margin-bottom: 0.25rem; }
+                .quick-action-label { font-size: 0.85rem; }
+                .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1.25rem; }
+                .info-item { background: var(--bg-input); padding: 1rem; border-radius: 12px; }
+                .info-item.full { grid-column: span 2; }
+                .info-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem; }
+                .info-value { font-size: 1rem; font-weight: 500; }
+                .info-value.large { font-size: 1.5rem; font-weight: 700; }
+                .gallon-input { width: 100%; padding: 1rem; font-size: 2rem; text-align: center; font-weight: 700; border-radius: 12px; border: 2px solid var(--border-color); background: var(--bg-input); color: var(--text-primary); }
+                .gallon-input:focus { border-color: var(--primary); outline: none; }
+            `;
+
+            const tankLevel = stop.tank_level_before || 50;
+            const tankClass = tankLevel <= 25 ? 'tank-low' : tankLevel <= 50 ? 'tank-medium' : 'tank-ok';
+
+            return (
+                <div className="complete-modal" onClick={(e) => e.target === e.currentTarget && onClose()}>
+                    <style>{modalStyles}</style>
+                    <div className="complete-modal-content">
+                        <div className="complete-modal-header">
+                            <h3 style={{margin:0}}>{showSkip ? '⚠️ Skip Stop' : `Stop #${stop.stop_number}`}</h3>
+                            <button className="icon-btn" onClick={onClose} style={{width:'36px',height:'36px',fontSize:'1rem'}}>✕</button>
+                        </div>
+
+                        <div className="complete-modal-body">
+                            {!showSkip ? (
+                                <>
+                                    <div style={{textAlign:'center',marginBottom:'1.25rem'}}>
+                                        <div style={{fontSize:'1.25rem',fontWeight:'700'}}>{stop.customer_name}</div>
+                                        <div style={{color:'var(--text-muted)',fontSize:'0.9rem'}}>{stop.customer_code}</div>
+                                    </div>
+
+                                    <div className="quick-actions">
+                                        <button className="quick-action" onClick={onNavigate}>
+                                            <div className="quick-action-icon">🧭</div>
+                                            <div className="quick-action-label">Navigate</div>
+                                        </button>
+                                        <button className="quick-action" onClick={onCall} disabled={!stop.phone}>
+                                            <div className="quick-action-icon">📞</div>
+                                            <div className="quick-action-label">Call</div>
+                                        </button>
+                                    </div>
+
+                                    <div className="info-grid">
+                                        <div className="info-item">
+                                            <div className="info-label">Tank Size</div>
+                                            <div className="info-value large">{stop.tank_size_gallons}g</div>
+                                        </div>
+                                        <div className="info-item">
+                                            <div className="info-label">Current Level</div>
+                                            <div className={`info-value large ${tankClass}`}>{tankLevel}%</div>
+                                        </div>
+                                        <div className="info-item full">
+                                            <div className="info-label">Address</div>
+                                            <div className="info-value">{stop.address}, {stop.city}, {stop.state}</div>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-group">
+                                        <label className="form-label">Gallons Delivered *</label>
+                                        <input 
+                                            type="number" 
+                                            className="gallon-input" 
+                                            value={gallons}
+                                            onChange={(e) => setGallons(e.target.value)}
+                                            placeholder={estimatedGallons.toString()}
+                                            inputMode="decimal"
+                                        />
+                                        <div style={{textAlign:'center',marginTop:'0.5rem',color:'var(--text-muted)',fontSize:'0.85rem'}}>
+                                            Est. ~{estimatedGallons} gal needed
+                                        </div>
+                                    </div>
+
+                                    <div className="form-group" style={{marginTop:'1rem'}}>
+                                        <label className="form-label">Tank Level After (optional)</label>
+                                        <input 
+                                            type="number" 
+                                            className="form-input" 
+                                            value={tankAfter}
+                                            onChange={(e) => setTankAfter(e.target.value)}
+                                            placeholder="e.g., 80"
+                                            inputMode="numeric"
+                                        />
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div style={{textAlign:'center',marginBottom:'1.25rem'}}>
+                                        <div style={{fontSize:'1.25rem',fontWeight:'700'}}>{stop.customer_name}</div>
+                                        <p style={{color:'var(--text-secondary)',marginTop:'0.5rem'}}>Select reason for skipping:</p>
+                                    </div>
+
+                                    <div className="form-group">
+                                        <select 
+                                            className="form-input" 
+                                            value={skipReason}
+                                            onChange={(e) => setSkipReason(e.target.value)}
+                                            style={{padding:'1rem',fontSize:'1rem'}}
+                                        >
+                                            <option value="">Select reason...</option>
+                                            <option value="Customer not home">Customer not home</option>
+                                            <option value="Unable to access tank">Unable to access tank</option>
+                                            <option value="Customer refused">Customer refused</option>
+                                            <option value="Road blocked">Road blocked</option>
+                                            <option value="Tank full">Tank already full</option>
+                                            <option value="Weather">Weather conditions</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        <div className="complete-modal-footer">
+                            {!showSkip ? (
+                                <>
+                                    <button className="btn btn-warning" onClick={() => setShowSkip(true)}>⚠️ Skip</button>
+                                    <button className="btn btn-success" onClick={handleComplete} disabled={loading}>
+                                        {loading ? '...' : '✓ Complete'}
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <button className="btn btn-secondary" onClick={() => setShowSkip(false)}>← Back</button>
+                                    <button className="btn btn-warning" onClick={handleSkip} disabled={loading}>
+                                        {loading ? '...' : 'Confirm Skip'}
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // =====================================================
         // Main App Component
         // =====================================================
         function App() {
@@ -7776,6 +8426,11 @@
             // Show login if no user
             if (!user || !company) {
                 return <LoginScreen onLogin={handleLogin} tenant={tenant} />;
+            }
+            
+            // If user is a driver, show mobile-friendly driver dashboard
+            if (user.role === 'driver') {
+                return <DriverDashboard user={user} company={company} onLogout={handleLogout} />;
             }
             
             return <MainDashboard user={user} company={company} onLogout={handleLogout} />;

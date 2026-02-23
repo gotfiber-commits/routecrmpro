@@ -637,15 +637,31 @@
                         fetch(`${API_BASE}/companies`, { headers: authHeaders })
                     ]);
 
+                    // Check for auth errors (token expired)
+                    if (statsRes.status === 401 || companiesRes.status === 401) {
+                        alert('Session expired. Please login again.');
+                        onLogout();
+                        return;
+                    }
+
                     if (statsRes.ok) {
                         setStats(await statsRes.json());
+                    } else {
+                        console.error('Stats error:', statsRes.status, await statsRes.text());
                     }
+                    
                     if (companiesRes.ok) {
                         const data = await companiesRes.json();
+                        console.log('Companies loaded:', data);
                         setCompanies(data.data || []);
+                    } else {
+                        const errText = await companiesRes.text();
+                        console.error('Companies error:', companiesRes.status, errText);
+                        alert('Failed to load companies: ' + errText);
                     }
                 } catch (err) {
                     console.error('Failed to load data:', err);
+                    alert('Network error: ' + err.message);
                 } finally {
                     setLoading(false);
                 }

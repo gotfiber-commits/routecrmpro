@@ -31,6 +31,11 @@ exports.handler = async (event, context) => {
             return error('Unauthorized - company mismatch', 403);
         }
 
+        // My Routes - Driver-specific routes (uses driver_id from user)
+        if (path === '/my-routes' && method === 'GET') {
+            return await getDriverRoutes(user, companyId, event);
+        }
+
         // Route Templates
         if (path.startsWith('/templates')) {
             return await handleTemplates(method, path.replace('/templates', ''), companyId, user, event);
@@ -52,6 +57,114 @@ exports.handler = async (event, context) => {
         return error('Internal server error: ' + err.message, 500);
     }
 };
+
+// =====================================================
+// DRIVER-SPECIFIC ROUTES
+// =====================================================
+
+async function getDriverRoutes(user, companyId, event) {
+    const params = event.queryStringParameters || {};
+    
+    // Get user's driver_id from the users table
+    const userResult = await query(
+        'SELECT driver_id FROM users WHERE id = $1 AND company_id = $2',
+        [user.userId, companyId]
+    );
+    
+    if (userResult.rows.length === 0) {
+        return error('User not found', 404);
+    }
+    
+    const driverId = userResult.rows[0].driver_id;
+    
+    if (!driverId) {
+        return error('No driver profile linked to this user. Please contact your administrator.', 400);
+    }
+    
+    // Get today's date for filtering
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Get routes assigned to this driver
+    let dateFilter = '';
+    const queryParams = [companyId, driverId];
+    
+    if (params.date) {
+        dateFilter = ' AND rr.scheduled_date = $3';
+        queryParams.push(params.date);
+    } else {
+        // Default: show today and future scheduled routes, plus any in-progress
+        dateFilter = ' AND (rr.scheduled_date >= $3 OR rr.status = \'in_progress\')';
+        queryParams.push(today);
+    }
+    
+    const result = await query(
+        `SELECT rr.*,
+                dc.name as dc_name, dc.code as dc_code,
+                dc.address as dc_address, dc.city as dc_city, dc.state as dc_state,
+                dc.lat as dc_lat, dc.lng as dc_lng,
+                d.name as driver_name, d.code as driver_code, d.phone as driver_phone,
+                t.name as truck_name, t.code as truck_code, 
+                t.capacity_gallons as truck_capacity,
+                t.make as truck_make, t.model as truck_model,
+                t.license_plate as truck_license_plate
+         FROM route_runs rr
+         LEFT JOIN distribution_centers dc ON rr.dc_id = dc.id
+         LEFT JOIN drivers d ON rr.driver_id = d.id
+         LEFT JOIN trucks t ON rr.truck_id = t.id
+         WHERE rr.company_id = $1 
+         AND rr.driver_id = $2
+         ${dateFilter}
+         AND rr.status != 'cancelled'
+         ORDER BY 
+            CASE rr.status 
+                WHEN 'in_progress' THEN 1 
+                WHEN 'scheduled' THEN 2 
+                ELSE 3 
+            END,
+            rr.scheduled_date ASC`,
+        queryParams
+    );
+    
+    // Get driver info
+    const driverResult = await query(
+        `SELECT d.*, 
+                dc.name as dc_name, dc.code as dc_code,
+                t.id as truck_id, t.code as truck_code, t.name as truck_name,
+                t.make as truck_make, t.model as truck_model, t.year as truck_year,
+                t.capacity_gallons, t.license_plate, t.current_odometer
+         FROM drivers d
+         LEFT JOIN distribution_centers dc ON d.dc_id = dc.id
+         LEFT JOIN trucks t ON t.assigned_driver_id = d.id AND t.status = 'active'
+         WHERE d.id = $1`,
+        [driverId]
+    );
+    
+    const driverInfo = driverResult.rows[0] || null;
+    
+    return success({
+        driver: driverInfo ? {
+            id: driverInfo.id,
+            code: driverInfo.code,
+            name: driverInfo.name,
+            phone: driverInfo.phone,
+            dcName: driverInfo.dc_name,
+            dcCode: driverInfo.dc_code
+        } : null,
+        truck: driverInfo && driverInfo.truck_id ? {
+            id: driverInfo.truck_id,
+            code: driverInfo.truck_code,
+            name: driverInfo.truck_name,
+            make: driverInfo.truck_make,
+            model: driverInfo.truck_model,
+            year: driverInfo.truck_year,
+            capacityGallons: driverInfo.capacity_gallons,
+            licensePlate: driverInfo.license_plate,
+            currentOdometer: driverInfo.current_odometer
+        } : null,
+        routes: result.rows,
+        today: today
+    });
+}
 
 // =====================================================
 // ROUTE TEMPLATES
@@ -651,6 +764,121 @@ async function handleRuns(method, path, companyId, user, event) {
         await updateRunStats(runId);
 
         return success(stop);
+    }
+
+    // POST /runs/:id/stops/:stopId/complete - Mark stop as completed (mobile-friendly)
+    if (method === 'POST' && path.match(/^\/[a-f0-9-]+\/stops\/[a-f0-9-]+\/complete$/)) {
+        const parts = path.split('/');
+        const runId = parts[1];
+        const stopId = parts[3];
+        const body = parseBody(event);
+
+        // Verify run belongs to company and is in progress
+        const runCheck = await query(
+            'SELECT id, status FROM route_runs WHERE id = $1 AND company_id = $2',
+            [runId, companyId]
+        );
+        if (runCheck.rows.length === 0) {
+            return error('Route run not found', 404);
+        }
+        if (runCheck.rows[0].status !== 'in_progress') {
+            return error('Route must be in progress to complete stops', 400);
+        }
+
+        // Get stop info for price calculation
+        const stopInfo = await query(
+            `SELECT rrs.*, c.price_per_gallon 
+             FROM route_run_stops rrs 
+             JOIN customers c ON rrs.customer_id = c.id 
+             WHERE rrs.id = $1 AND rrs.run_id = $2`,
+            [stopId, runId]
+        );
+        if (stopInfo.rows.length === 0) {
+            return error('Stop not found', 404);
+        }
+
+        const pricePerGallon = parseFloat(stopInfo.rows[0].price_per_gallon) || 0;
+        const gallonsDelivered = parseFloat(body.gallons_delivered) || 0;
+        const deliveryTotal = gallonsDelivered * pricePerGallon;
+
+        const result = await query(
+            `UPDATE route_run_stops SET 
+                status = 'completed',
+                arrived_at = COALESCE(arrived_at, NOW()),
+                departed_at = NOW(),
+                tank_level_after = $1,
+                gallons_delivered = $2,
+                delivery_total = $3,
+                notes = $4,
+                updated_at = NOW()
+             WHERE id = $5 AND run_id = $6 RETURNING *`,
+            [
+                body.tank_level_after,
+                gallonsDelivered,
+                deliveryTotal,
+                body.notes,
+                stopId,
+                runId
+            ]
+        );
+
+        const stop = result.rows[0];
+
+        // Update customer's tank level and last delivery info
+        if (gallonsDelivered > 0) {
+            await query(
+                `UPDATE customers SET 
+                    current_level = $1,
+                    last_delivery_date = CURRENT_DATE,
+                    last_delivery_gallons = $2,
+                    updated_at = NOW()
+                 WHERE id = $3`,
+                [body.tank_level_after || 100, gallonsDelivered, stop.customer_id]
+            );
+        }
+
+        // Update run stats
+        await updateRunStats(runId);
+
+        return success(stop);
+    }
+
+    // POST /runs/:id/stops/:stopId/skip - Mark stop as skipped (mobile-friendly)
+    if (method === 'POST' && path.match(/^\/[a-f0-9-]+\/stops\/[a-f0-9-]+\/skip$/)) {
+        const parts = path.split('/');
+        const runId = parts[1];
+        const stopId = parts[3];
+        const body = parseBody(event);
+
+        // Verify run belongs to company and is in progress
+        const runCheck = await query(
+            'SELECT id, status FROM route_runs WHERE id = $1 AND company_id = $2',
+            [runId, companyId]
+        );
+        if (runCheck.rows.length === 0) {
+            return error('Route run not found', 404);
+        }
+        if (runCheck.rows[0].status !== 'in_progress') {
+            return error('Route must be in progress to skip stops', 400);
+        }
+
+        const result = await query(
+            `UPDATE route_run_stops SET 
+                status = 'skipped',
+                skip_reason = $1,
+                updated_at = NOW()
+             WHERE id = $2 AND run_id = $3 RETURNING *`,
+            [body.reason || 'Not specified', stopId, runId]
+        );
+
+        if (result.rows.length === 0) {
+            return error('Stop not found', 404);
+        }
+
+        // Update run stats
+        await updateRunStats(runId);
+
+        return success(result.rows[0]);
     }
 
     // POST /runs/:id/stops - Add a customer to an existing route

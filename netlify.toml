@@ -44,6 +44,17 @@
   to = "/app.html"
   status = 200
 
+# Driver mobile app
+[[redirects]]
+  from = "/driver"
+  to = "/driver.html"
+  status = 200
+
+[[redirects]]
+  from = "/driver/*"
+  to = "/driver.html"
+  status = 200
+
 # Root serves landing page (index.html) by default
 
 [dev]
