@@ -1,10 +1,16 @@
 // Response helper utilities
 
+// CORS Headers - In production, restrict Access-Control-Allow-Origin to your domain
 const CORS_HEADERS = {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': '*',  // TODO: Set to specific domain in production
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    // Security headers
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'X-XSS-Protection': '1; mode=block',
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains'
 };
 
 // Success response

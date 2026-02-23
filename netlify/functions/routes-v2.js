@@ -653,6 +653,328 @@ async function handleRuns(method, path, companyId, user, event) {
         return success(stop);
     }
 
+    // POST /runs/:id/stops - Add a customer to an existing route
+    if (method === 'POST' && path.match(/^\/[a-f0-9-]+\/stops$/)) {
+        if (!requireRole(user, ['admin', 'dispatch'])) {
+            return error('Access denied', 403);
+        }
+        
+        const runId = path.split('/')[1];
+        const body = parseBody(event);
+        const { customer_id, stop_number, after_stop_id } = body;
+
+        // Verify run belongs to company and is still editable
+        const runCheck = await query(
+            `SELECT rr.id, rr.status, rr.dc_id FROM route_runs rr WHERE rr.id = $1 AND rr.company_id = $2`,
+            [runId, companyId]
+        );
+        if (runCheck.rows.length === 0) {
+            return error('Route run not found', 404);
+        }
+        if (runCheck.rows[0].status === 'completed' || runCheck.rows[0].status === 'cancelled') {
+            return error('Cannot modify a completed or cancelled route', 400);
+        }
+
+        // Verify customer exists and belongs to company
+        const customerCheck = await query(
+            `SELECT id, name, tank_size, current_level, price_per_gallon FROM customers WHERE id = $1 AND company_id = $2`,
+            [customer_id, companyId]
+        );
+        if (customerCheck.rows.length === 0) {
+            return error('Customer not found', 404);
+        }
+
+        // Check if customer is already on this route
+        const existingStop = await query(
+            `SELECT id FROM route_run_stops WHERE run_id = $1 AND customer_id = $2`,
+            [runId, customer_id]
+        );
+        if (existingStop.rows.length > 0) {
+            return error('Customer is already on this route', 400);
+        }
+
+        // Determine stop number
+        let newStopNumber = stop_number;
+        if (!newStopNumber) {
+            if (after_stop_id) {
+                // Insert after specific stop
+                const afterStop = await query(
+                    `SELECT stop_number FROM route_run_stops WHERE id = $1 AND run_id = $2`,
+                    [after_stop_id, runId]
+                );
+                if (afterStop.rows.length > 0) {
+                    newStopNumber = afterStop.rows[0].stop_number + 1;
+                    // Shift subsequent stops
+                    await query(
+                        `UPDATE route_run_stops SET stop_number = stop_number + 1 WHERE run_id = $1 AND stop_number >= $2`,
+                        [runId, newStopNumber]
+                    );
+                }
+            }
+            if (!newStopNumber) {
+                // Add at end
+                const maxStop = await query(
+                    `SELECT COALESCE(MAX(stop_number), 0) as max_num FROM route_run_stops WHERE run_id = $1`,
+                    [runId]
+                );
+                newStopNumber = maxStop.rows[0].max_num + 1;
+            }
+        }
+
+        const cust = customerCheck.rows[0];
+        const result = await query(
+            `INSERT INTO route_run_stops (run_id, customer_id, stop_number, tank_size_gallons, tank_level_before, price_per_gallon, status)
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING *`,
+            [runId, customer_id, newStopNumber, cust.tank_size, cust.current_level, cust.price_per_gallon]
+        );
+
+        // Update run total_stops
+        await query(`UPDATE route_runs SET total_stops = total_stops + 1, updated_at = NOW() WHERE id = $1`, [runId]);
+
+        return success(result.rows[0]);
+    }
+
+    // DELETE /runs/:id/stops/:stopId - Remove a customer from a route
+    if (method === 'DELETE' && path.match(/^\/[a-f0-9-]+\/stops\/[a-f0-9-]+$/)) {
+        if (!requireRole(user, ['admin', 'dispatch'])) {
+            return error('Access denied', 403);
+        }
+        
+        const parts = path.split('/');
+        const runId = parts[1];
+        const stopId = parts[3];
+
+        // Verify run belongs to company and is editable
+        const runCheck = await query(
+            `SELECT id, status FROM route_runs WHERE id = $1 AND company_id = $2`,
+            [runId, companyId]
+        );
+        if (runCheck.rows.length === 0) {
+            return error('Route run not found', 404);
+        }
+        if (runCheck.rows[0].status === 'completed' || runCheck.rows[0].status === 'cancelled') {
+            return error('Cannot modify a completed or cancelled route', 400);
+        }
+
+        // Get stop number before deleting
+        const stopCheck = await query(
+            `SELECT stop_number, status FROM route_run_stops WHERE id = $1 AND run_id = $2`,
+            [stopId, runId]
+        );
+        if (stopCheck.rows.length === 0) {
+            return error('Stop not found', 404);
+        }
+        if (stopCheck.rows[0].status === 'completed') {
+            return error('Cannot remove a completed stop', 400);
+        }
+
+        const removedStopNumber = stopCheck.rows[0].stop_number;
+
+        // Delete the stop
+        await query(`DELETE FROM route_run_stops WHERE id = $1`, [stopId]);
+
+        // Renumber subsequent stops
+        await query(
+            `UPDATE route_run_stops SET stop_number = stop_number - 1 WHERE run_id = $1 AND stop_number > $2`,
+            [runId, removedStopNumber]
+        );
+
+        // Update run total_stops
+        await query(`UPDATE route_runs SET total_stops = total_stops - 1, updated_at = NOW() WHERE id = $1`, [runId]);
+
+        return success({ message: 'Stop removed' });
+    }
+
+    // PUT /runs/:id/reorder - Reorder stops on a route
+    if (method === 'PUT' && path.match(/^\/[a-f0-9-]+\/reorder$/)) {
+        if (!requireRole(user, ['admin', 'dispatch'])) {
+            return error('Access denied', 403);
+        }
+        
+        const runId = path.split('/')[1];
+        const body = parseBody(event);
+        const { stop_order } = body; // Array of stop IDs in new order
+
+        // Verify run belongs to company and is editable
+        const runCheck = await query(
+            `SELECT id, status FROM route_runs WHERE id = $1 AND company_id = $2`,
+            [runId, companyId]
+        );
+        if (runCheck.rows.length === 0) {
+            return error('Route run not found', 404);
+        }
+        if (runCheck.rows[0].status === 'completed' || runCheck.rows[0].status === 'cancelled') {
+            return error('Cannot modify a completed or cancelled route', 400);
+        }
+
+        // Update each stop's position
+        for (let i = 0; i < stop_order.length; i++) {
+            await query(
+                `UPDATE route_run_stops SET stop_number = $1, updated_at = NOW() WHERE id = $2 AND run_id = $3`,
+                [i + 1, stop_order[i], runId]
+            );
+        }
+
+        return success({ message: 'Stops reordered' });
+    }
+
+    // POST /runs/:id/reoptimize - Re-optimize an existing route
+    if (method === 'POST' && path.match(/^\/[a-f0-9-]+\/reoptimize$/)) {
+        if (!requireRole(user, ['admin', 'dispatch'])) {
+            return error('Access denied', 403);
+        }
+        
+        const runId = path.split('/')[1];
+
+        // Verify run belongs to company and is editable
+        const runCheck = await query(
+            `SELECT rr.id, rr.status, rr.dc_id, dc.lat as dc_lat, dc.lng as dc_lng
+             FROM route_runs rr
+             JOIN distribution_centers dc ON rr.dc_id = dc.id
+             WHERE rr.id = $1 AND rr.company_id = $2`,
+            [runId, companyId]
+        );
+        if (runCheck.rows.length === 0) {
+            return error('Route run not found', 404);
+        }
+        if (runCheck.rows[0].status === 'completed' || runCheck.rows[0].status === 'cancelled') {
+            return error('Cannot modify a completed or cancelled route', 400);
+        }
+
+        const run = runCheck.rows[0];
+
+        // Get current stops with pending status only
+        const stopsResult = await query(
+            `SELECT rrs.id, rrs.customer_id, c.lat, c.lng, c.name
+             FROM route_run_stops rrs
+             JOIN customers c ON rrs.customer_id = c.id
+             WHERE rrs.run_id = $1 AND rrs.status = 'pending'
+             ORDER BY rrs.stop_number`,
+            [runId]
+        );
+
+        if (stopsResult.rows.length < 2) {
+            return error('Need at least 2 pending stops to re-optimize', 400);
+        }
+
+        const pendingStops = stopsResult.rows;
+
+        // Build locations array with DC as depot
+        const depot = { lat: parseFloat(run.dc_lat), lng: parseFloat(run.dc_lng) };
+        const locations = [depot, ...pendingStops.map(s => ({ lat: parseFloat(s.lat), lng: parseFloat(s.lng) }))];
+
+        // Use nearest neighbor algorithm to optimize
+        const optimizedOrder = nearestNeighborRoute(locations);
+        
+        // Map back to stop IDs (skip depot at index 0)
+        const newOrder = optimizedOrder.slice(1).map(idx => pendingStops[idx - 1].id);
+
+        // Update stop numbers
+        for (let i = 0; i < newOrder.length; i++) {
+            await query(
+                `UPDATE route_run_stops SET stop_number = $1, updated_at = NOW() WHERE id = $2 AND run_id = $3`,
+                [i + 1, newOrder[i], runId]
+            );
+        }
+
+        return success({ message: 'Route re-optimized', new_order: newOrder });
+    }
+
+    // DELETE /runs/:id - Delete an entire route (if scheduled)
+    if (method === 'DELETE' && path.match(/^\/[a-f0-9-]+$/)) {
+        if (!requireRole(user, ['admin', 'dispatch'])) {
+            return error('Access denied', 403);
+        }
+        
+        const runId = path.slice(1);
+
+        // Verify run belongs to company and is deletable
+        const runCheck = await query(
+            `SELECT id, status FROM route_runs WHERE id = $1 AND company_id = $2`,
+            [runId, companyId]
+        );
+        if (runCheck.rows.length === 0) {
+            return error('Route run not found', 404);
+        }
+        if (runCheck.rows[0].status === 'in_progress') {
+            return error('Cannot delete a route that is in progress. Complete or cancel it first.', 400);
+        }
+
+        // Delete stops first (cascade should handle this, but being explicit)
+        await query(`DELETE FROM route_run_stops WHERE run_id = $1`, [runId]);
+        
+        // Delete the run
+        await query(`DELETE FROM route_runs WHERE id = $1 AND company_id = $2`, [runId, companyId]);
+
+        return success({ message: 'Route deleted' });
+    }
+
+    // POST /runs/:id/clone - Clone a route for another day
+    if (method === 'POST' && path.match(/^\/[a-f0-9-]+\/clone$/)) {
+        if (!requireRole(user, ['admin', 'dispatch'])) {
+            return error('Access denied', 403);
+        }
+        
+        const sourceRunId = path.split('/')[1];
+        const body = parseBody(event);
+        const { scheduled_date, driver_id, truck_id } = body;
+
+        // Get source run
+        const sourceRun = await query(
+            `SELECT * FROM route_runs WHERE id = $1 AND company_id = $2`,
+            [sourceRunId, companyId]
+        );
+        if (sourceRun.rows.length === 0) {
+            return error('Source route not found', 404);
+        }
+
+        const src = sourceRun.rows[0];
+
+        // Create new run
+        const newRun = await query(
+            `INSERT INTO route_runs (
+                company_id, template_id, name, dc_id, driver_id, truck_id, 
+                scheduled_date, start_time, total_stops,
+                estimated_miles, estimated_duration_minutes,
+                truck_mpg, fuel_price_per_gallon, estimated_fuel_gallons, estimated_fuel_cost,
+                driver_hourly_rate, driver_overtime_rate, estimated_driver_hours, estimated_driver_cost,
+                estimated_total_cost, status
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'scheduled')
+             RETURNING *`,
+            [
+                companyId, src.template_id, src.name + ' (Copy)', src.dc_id, 
+                driver_id || src.driver_id, truck_id || src.truck_id,
+                scheduled_date || new Date().toISOString().split('T')[0], src.start_time, src.total_stops,
+                src.estimated_miles, src.estimated_duration_minutes,
+                src.truck_mpg, src.fuel_price_per_gallon, src.estimated_fuel_gallons, src.estimated_fuel_cost,
+                src.driver_hourly_rate, src.driver_overtime_rate, src.estimated_driver_hours, src.estimated_driver_cost,
+                src.estimated_total_cost
+            ]
+        );
+
+        const newRunId = newRun.rows[0].id;
+
+        // Copy stops
+        const sourceStops = await query(
+            `SELECT customer_id, stop_number, tank_size_gallons, price_per_gallon FROM route_run_stops WHERE run_id = $1 ORDER BY stop_number`,
+            [sourceRunId]
+        );
+
+        for (const stop of sourceStops.rows) {
+            // Get current tank level for customer
+            const custResult = await query(`SELECT current_level FROM customers WHERE id = $1`, [stop.customer_id]);
+            const currentLevel = custResult.rows[0]?.current_level || 50;
+
+            await query(
+                `INSERT INTO route_run_stops (run_id, customer_id, stop_number, tank_size_gallons, tank_level_before, price_per_gallon, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
+                [newRunId, stop.customer_id, stop.stop_number, stop.tank_size_gallons, currentLevel, stop.price_per_gallon]
+            );
+        }
+
+        return success(newRun.rows[0]);
+    }
+
     return error('Not found', 404);
 }
 
@@ -892,5 +1214,42 @@ function nearestNeighborOptimize(customers, depot) {
         current = { lat: parseFloat(nearest.lat), lng: parseFloat(nearest.lng) };
     }
 
+    return route;
+}
+
+// Nearest Neighbor that returns indices (for re-optimization)
+function nearestNeighborRoute(locations) {
+    // locations[0] is the depot
+    const depot = locations[0];
+    const stops = locations.slice(1);
+    const n = stops.length;
+    
+    const visited = new Array(n).fill(false);
+    const route = [0]; // Start with depot index
+    let current = depot;
+    
+    for (let i = 0; i < n; i++) {
+        let nearestIdx = -1;
+        let nearestDist = Infinity;
+        
+        for (let j = 0; j < n; j++) {
+            if (visited[j]) continue;
+            const dist = haversineDistance(
+                current.lat, current.lng,
+                stops[j].lat, stops[j].lng
+            );
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearestIdx = j;
+            }
+        }
+        
+        if (nearestIdx >= 0) {
+            visited[nearestIdx] = true;
+            route.push(nearestIdx + 1); // +1 because stops are offset from locations
+            current = stops[nearestIdx];
+        }
+    }
+    
     return route;
 }

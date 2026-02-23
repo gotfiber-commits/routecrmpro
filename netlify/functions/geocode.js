@@ -1,10 +1,22 @@
 // Geocoding API - Converts addresses to lat/lng coordinates using Google Maps
-const { success, error } = require('./utils/response');
+const { success, error, handleOptions } = require('./utils/response');
+const { requireAuth } = require('./utils/auth');
 
 exports.handler = async (event) => {
+    // Handle CORS preflight
+    if (event.httpMethod === 'OPTIONS') {
+        return handleOptions();
+    }
+
     // Only allow POST
     if (event.httpMethod !== 'POST') {
         return error('Method not allowed', 405);
+    }
+
+    // Require authentication
+    const authResult = requireAuth(event);
+    if (authResult.error) {
+        return error(authResult.error, authResult.status);
     }
 
     try {
