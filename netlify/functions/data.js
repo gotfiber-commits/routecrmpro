@@ -65,6 +65,29 @@ exports.handler = async (event, context) => {
             return await handleUsers(method, path, companyId, event);
         }
 
+        // Company Settings (admin only)
+        if (path === '/company-settings' && method === 'PUT') {
+            if (role !== 'admin') {
+                return error('Admin access required', 403);
+            }
+            const body = parseBody(event);
+            await query(
+                `UPDATE companies SET 
+                    delivery_model = $1,
+                    track_empties = $2,
+                    track_truck_inventory = $3,
+                    updated_at = NOW()
+                 WHERE id = $4`,
+                [
+                    body.delivery_model || 'gallons',
+                    body.track_empties || false,
+                    body.track_truck_inventory || false,
+                    companyId
+                ]
+            );
+            return success({ message: 'Settings saved' });
+        }
+
         return error('Not found', 404);
     } catch (err) {
         console.error('Data API error:', err);

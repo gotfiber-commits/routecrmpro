@@ -36,6 +36,12 @@ exports.handler = async (event, context) => {
             return await getDriverRoutes(user, companyId, event);
         }
 
+        // GET /customer-products/:customerId - Get products available for a customer (for driver stop completion)
+        if (method === 'GET' && path.match(/^\/customer-products\/[a-f0-9-]+$/)) {
+            const customerId = path.split('/')[2];
+            return await getCustomerProductsForDriver(companyId, customerId);
+        }
+
         // Route Templates
         if (path.startsWith('/templates')) {
             return await handleTemplates(method, path.replace('/templates', ''), companyId, user, event);
@@ -141,6 +147,41 @@ async function getDriverRoutes(user, companyId, event) {
     
     const driverInfo = driverResult.rows[0] || null;
     
+    // Get company delivery settings
+    const companySettings = await query(
+        `SELECT delivery_model, track_empties, track_truck_inventory
+         FROM companies WHERE id = $1`,
+        [companyId]
+    );
+    const settings = companySettings.rows[0] || { delivery_model: 'gallons' };
+    
+    // If product-based delivery, get the products list
+    let products = [];
+    if (settings.delivery_model === 'products' || settings.delivery_model === 'mixed') {
+        const productsResult = await query(
+            `SELECT id, type, code, name, category, unit, default_price, 
+                    gallon_equivalent, is_exchangeable, deposit_amount, sort_order
+             FROM products 
+             WHERE company_id = $1 AND status = 'active'
+             ORDER BY sort_order, category, name`,
+            [companyId]
+        );
+        products = productsResult.rows;
+    }
+    
+    // Get truck inventory if tracking enabled
+    let truckInventory = [];
+    if (settings.track_truck_inventory && driverInfo?.truck_id) {
+        const invResult = await query(
+            `SELECT ti.product_id, ti.quantity, p.code as product_code, p.name as product_name
+             FROM truck_inventory ti
+             JOIN products p ON ti.product_id = p.id
+             WHERE ti.truck_id = $1 AND p.status = 'active'`,
+            [driverInfo.truck_id]
+        );
+        truckInventory = invResult.rows;
+    }
+    
     return success({
         driver: driverInfo ? {
             id: driverInfo.id,
@@ -159,10 +200,60 @@ async function getDriverRoutes(user, companyId, event) {
             year: driverInfo.truck_year,
             capacityGallons: driverInfo.capacity_gallons,
             licensePlate: driverInfo.license_plate,
-            currentOdometer: driverInfo.current_odometer
+            currentOdometer: driverInfo.current_odometer,
+            inventory: truckInventory
         } : null,
         routes: result.rows,
-        today: today
+        today: today,
+        settings: {
+            deliveryModel: settings.delivery_model || 'gallons',
+            trackEmpties: settings.track_empties || false,
+            trackInventory: settings.track_truck_inventory || false
+        },
+        products: products
+    });
+}
+
+// Get products available for a specific customer (with customer-specific pricing)
+async function getCustomerProductsForDriver(companyId, customerId) {
+    // Verify customer belongs to company
+    const customerCheck = await query(
+        'SELECT id, name, code FROM customers WHERE id = $1 AND company_id = $2',
+        [customerId, companyId]
+    );
+    if (customerCheck.rows.length === 0) {
+        return error('Customer not found', 404);
+    }
+
+    // Get all active products with customer-specific pricing
+    const result = await query(
+        `SELECT 
+            p.id,
+            p.type,
+            p.code,
+            p.name,
+            p.category,
+            p.unit,
+            p.default_price,
+            p.gallon_equivalent,
+            p.is_exchangeable,
+            p.deposit_amount,
+            p.track_inventory,
+            p.sort_order,
+            cp.custom_price,
+            COALESCE(cp.is_enabled, true) as is_enabled,
+            COALESCE(cp.custom_price, p.default_price) as effective_price
+         FROM products p
+         LEFT JOIN customer_products cp ON p.id = cp.product_id AND cp.customer_id = $1
+         WHERE p.company_id = $2 AND p.status = 'active'
+         AND COALESCE(cp.is_enabled, true) = true
+         ORDER BY p.sort_order, p.category, p.name`,
+        [customerId, companyId]
+    );
+
+    return success({
+        customer: customerCheck.rows[0],
+        products: result.rows
     });
 }
 
@@ -879,6 +970,176 @@ async function handleRuns(method, path, companyId, user, event) {
         await updateRunStats(runId);
 
         return success(result.rows[0]);
+    }
+
+    // POST /runs/:id/stops/:stopId/complete-products - Complete stop with product delivery
+    if (method === 'POST' && path.match(/^\/[a-f0-9-]+\/stops\/[a-f0-9-]+\/complete-products$/)) {
+        const parts = path.split('/');
+        const runId = parts[1];
+        const stopId = parts[3];
+        const body = parseBody(event);
+
+        // Verify run belongs to company and is in progress
+        const runCheck = await query(
+            'SELECT rr.id, rr.status, rr.truck_id FROM route_runs rr WHERE rr.id = $1 AND rr.company_id = $2',
+            [runId, companyId]
+        );
+        if (runCheck.rows.length === 0) {
+            return error('Route run not found', 404);
+        }
+        if (runCheck.rows[0].status !== 'in_progress') {
+            return error('Route must be in progress to complete stops', 400);
+        }
+
+        const truckId = runCheck.rows[0].truck_id;
+
+        // Get stop info
+        const stopInfo = await query(
+            `SELECT rrs.*, c.id as customer_id 
+             FROM route_run_stops rrs 
+             JOIN customers c ON rrs.customer_id = c.id 
+             WHERE rrs.id = $1 AND rrs.run_id = $2`,
+            [stopId, runId]
+        );
+        if (stopInfo.rows.length === 0) {
+            return error('Stop not found', 404);
+        }
+
+        const customerId = stopInfo.rows[0].customer_id;
+        const items = body.items || [];
+        let itemsTotal = 0;
+        let depositsCollected = 0;
+        let depositsRefunded = 0;
+        let totalGallonEquivalent = 0;
+
+        // Process each item
+        for (const item of items) {
+            // Get product info with customer-specific pricing
+            const productInfo = await query(
+                `SELECT p.*, 
+                        COALESCE(cp.custom_price, p.default_price) as effective_price,
+                        cp.is_enabled
+                 FROM products p
+                 LEFT JOIN customer_products cp ON p.id = cp.product_id AND cp.customer_id = $1
+                 WHERE p.id = $2 AND p.company_id = $3`,
+                [customerId, item.product_id, companyId]
+            );
+
+            if (productInfo.rows.length === 0) continue;
+            
+            const product = productInfo.rows[0];
+            const qtyDelivered = parseInt(item.quantity_delivered) || 0;
+            const qtyCollected = parseInt(item.quantity_collected) || 0;
+            const unitPrice = parseFloat(product.effective_price) || 0;
+            const lineTotal = qtyDelivered * unitPrice;
+            
+            // Calculate deposits
+            let itemDepositsCollected = 0;
+            let itemDepositsRefunded = 0;
+            if (product.is_exchangeable && product.deposit_amount > 0) {
+                // New deliveries = collect deposit, returns = refund deposit
+                if (qtyDelivered > qtyCollected) {
+                    itemDepositsCollected = (qtyDelivered - qtyCollected) * product.deposit_amount;
+                } else if (qtyCollected > qtyDelivered) {
+                    itemDepositsRefunded = (qtyCollected - qtyDelivered) * product.deposit_amount;
+                }
+            }
+
+            // Insert delivery item record
+            await query(
+                `INSERT INTO delivery_items 
+                 (company_id, stop_id, product_id, quantity_delivered, quantity_collected, 
+                  unit_price, line_total, deposit_collected, deposit_refunded, notes)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                [companyId, stopId, item.product_id, qtyDelivered, qtyCollected,
+                 unitPrice, lineTotal, itemDepositsCollected, itemDepositsRefunded, item.notes]
+            );
+
+            itemsTotal += lineTotal;
+            depositsCollected += itemDepositsCollected;
+            depositsRefunded += itemDepositsRefunded;
+
+            // Calculate gallon equivalent for reporting
+            if (product.gallon_equivalent && qtyDelivered > 0) {
+                totalGallonEquivalent += qtyDelivered * parseFloat(product.gallon_equivalent);
+            }
+
+            // Update truck inventory if tracking enabled
+            if (truckId && product.track_inventory) {
+                // Decrease inventory for deliveries
+                if (qtyDelivered > 0) {
+                    await query(
+                        `UPDATE truck_inventory 
+                         SET quantity = quantity - $1, updated_at = NOW()
+                         WHERE truck_id = $2 AND product_id = $3`,
+                        [qtyDelivered, truckId, item.product_id]
+                    );
+                    
+                    // Log the change
+                    await query(
+                        `INSERT INTO truck_inventory_log 
+                         (company_id, truck_id, product_id, change_type, quantity_change, stop_id, run_id, user_id)
+                         VALUES ($1, $2, $3, 'delivery', $4, $5, $6, $7)`,
+                        [companyId, truckId, item.product_id, -qtyDelivered, stopId, runId, user.userId]
+                    );
+                }
+
+                // Increase inventory for collections (empties)
+                if (qtyCollected > 0) {
+                    await query(
+                        `UPDATE truck_inventory 
+                         SET quantity = quantity + $1, updated_at = NOW()
+                         WHERE truck_id = $2 AND product_id = $3`,
+                        [qtyCollected, truckId, item.product_id]
+                    );
+                    
+                    await query(
+                        `INSERT INTO truck_inventory_log 
+                         (company_id, truck_id, product_id, change_type, quantity_change, stop_id, run_id, user_id)
+                         VALUES ($1, $2, $3, 'collection', $4, $5, $6, $7)`,
+                        [companyId, truckId, item.product_id, qtyCollected, stopId, runId, user.userId]
+                    );
+                }
+            }
+        }
+
+        // Calculate final delivery total
+        const deliveryTotal = itemsTotal + depositsCollected - depositsRefunded;
+
+        // Update the stop record
+        const result = await query(
+            `UPDATE route_run_stops SET 
+                status = 'completed',
+                arrived_at = COALESCE(arrived_at, NOW()),
+                departed_at = NOW(),
+                delivery_model = 'products',
+                gallons_delivered = $1,
+                delivery_total = $2,
+                items_total = $3,
+                deposits_collected = $4,
+                deposits_refunded = $5,
+                notes = $6,
+                updated_at = NOW()
+             WHERE id = $7 AND run_id = $8 RETURNING *`,
+            [totalGallonEquivalent, deliveryTotal, itemsTotal, depositsCollected, depositsRefunded, body.notes, stopId, runId]
+        );
+
+        // Update run stats
+        await updateRunStats(runId);
+
+        // Return stop with items
+        const deliveryItems = await query(
+            `SELECT di.*, p.name as product_name, p.code as product_code
+             FROM delivery_items di
+             JOIN products p ON di.product_id = p.id
+             WHERE di.stop_id = $1`,
+            [stopId]
+        );
+
+        return success({
+            ...result.rows[0],
+            items: deliveryItems.rows
+        });
     }
 
     // POST /runs/:id/stops - Add a customer to an existing route

@@ -636,9 +636,10 @@
             
             if (user?.role === 'admin') {
                 navItems.push(
+                    { id: 'products', icon: '📦', label: 'Products & Services' },
                     { id: 'users', icon: '👤', label: 'Users' },
                     { id: 'integrations', icon: '🔗', label: 'Integrations' },
-                    { id: 'reports', icon: '📊', label: 'Reports' },
+                    { id: 'settings', icon: '⚙️', label: 'Settings' },
                     { id: 'billing', icon: '💳', label: 'Billing' }
                 );
             }
@@ -682,8 +683,10 @@
                                 {activeView === 'trucks' && <TrucksView data={data} onRefresh={loadData} />}
                                 {activeView === 'drivers' && <DriversView data={data} onRefresh={loadData} />}
                                 {activeView === 'dcs' && <DCsView data={data} onRefresh={loadData} />}
+                                {activeView === 'products' && <ProductsView onRefresh={loadData} />}
                                 {activeView === 'users' && <UsersView data={data} onRefresh={loadData} />}
                                 {activeView === 'integrations' && <IntegrationsView data={data} onRefresh={loadData} />}
+                                {activeView === 'settings' && <CompanySettingsView onRefresh={loadData} />}
                                 {activeView === 'reports' && <ReportsView data={data} />}
                                 {activeView === 'billing' && <BillingView />}
                             </>
@@ -5747,6 +5750,301 @@
         }
 
         // =====================================================
+        // PRODUCTS & SERVICES VIEW (Admin Only)
+        // =====================================================
+        function ProductsView({ onRefresh }) {
+            const [products, setProducts] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [showModal, setShowModal] = useState(false);
+            const [editItem, setEditItem] = useState(null);
+            const [filter, setFilter] = useState('all');
+
+            useEffect(() => {
+                loadProducts();
+            }, []);
+
+            const loadProducts = async () => {
+                try {
+                    const data = await api.request('/products');
+                    setProducts(data);
+                } catch (err) {
+                    console.error('Failed to load products:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleSave = async (formData) => {
+                try {
+                    if (editItem) {
+                        await api.request(`/products/${editItem.id}`, { method: 'PUT', body: JSON.stringify(formData) });
+                    } else {
+                        await api.request('/products', { method: 'POST', body: JSON.stringify(formData) });
+                    }
+                    setShowModal(false);
+                    setEditItem(null);
+                    loadProducts();
+                } catch (err) {
+                    alert('Error: ' + err.message);
+                }
+            };
+
+            const handleDelete = async (id) => {
+                if (!confirm('Delete this product?')) return;
+                await api.request(`/products/${id}`, { method: 'DELETE' });
+                loadProducts();
+            };
+
+            const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
+            const filteredProducts = filter === 'all' 
+                ? products 
+                : filter === 'products' 
+                    ? products.filter(p => p.type === 'product')
+                    : filter === 'services'
+                        ? products.filter(p => p.type === 'service')
+                        : products.filter(p => p.category === filter);
+
+            const formFields = [
+                { type: 'row', fields: [
+                    { name: 'type', label: 'Type', type: 'select', required: true, options: [
+                        { value: 'product', label: 'Product' },
+                        { value: 'service', label: 'Service' }
+                    ]},
+                    { name: 'status', label: 'Status', type: 'select', options: [
+                        { value: 'active', label: 'Active' },
+                        { value: 'inactive', label: 'Inactive' }
+                    ]}
+                ]},
+                { type: 'row', fields: [
+                    { name: 'code', label: 'Code', type: 'text', placeholder: 'e.g., 20LB' },
+                    { name: 'name', label: 'Name', type: 'text', required: true, placeholder: '20lb Propane Tank' }
+                ]},
+                { type: 'row', fields: [
+                    { name: 'category', label: 'Category', type: 'text', placeholder: 'Propane Tanks' },
+                    { name: 'unit', label: 'Unit', type: 'text', placeholder: 'each' }
+                ]},
+                { type: 'row', fields: [
+                    { name: 'default_price', label: 'Price ($)', type: 'number', step: '0.01', required: true },
+                    { name: 'cost', label: 'Cost ($)', type: 'number', step: '0.01' }
+                ]},
+                { type: 'row', fields: [
+                    { name: 'gallon_equivalent', label: 'Gallon Equivalent', type: 'number', step: '0.1', placeholder: 'For reporting' },
+                    { name: 'sort_order', label: 'Sort Order', type: 'number' }
+                ]},
+                { type: 'row', fields: [
+                    { name: 'is_exchangeable', label: 'Exchangeable?', type: 'checkbox' },
+                    { name: 'deposit_amount', label: 'Deposit ($)', type: 'number', step: '0.01' }
+                ]},
+                { name: 'track_inventory', label: 'Track Inventory on Trucks', type: 'checkbox' },
+                { name: 'description', label: 'Description', type: 'textarea' }
+            ];
+
+            return (
+                <>
+                    <div className="page-header">
+                        <h1 className="page-title">📦 Products & Services</h1>
+                        <button className="btn btn-primary" onClick={() => { setEditItem(null); setShowModal(true); }}>+ Add Product</button>
+                    </div>
+
+                    <div style={{marginBottom:'1rem',display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                        <button className={`btn btn-sm ${filter === 'all' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('all')}>All</button>
+                        <button className={`btn btn-sm ${filter === 'products' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('products')}>Products</button>
+                        <button className={`btn btn-sm ${filter === 'services' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('services')}>Services</button>
+                        {categories.map(cat => (
+                            <button key={cat} className={`btn btn-sm ${filter === cat ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter(cat)}>{cat}</button>
+                        ))}
+                    </div>
+
+                    {loading ? (
+                        <div style={{textAlign:'center',padding:'2rem'}}><div className="spinner"></div></div>
+                    ) : (
+                        <div className="table-container">
+                            <table className="table">
+                                <thead>
+                                    <tr>
+                                        <th>Type</th>
+                                        <th>Code</th>
+                                        <th>Name</th>
+                                        <th>Category</th>
+                                        <th>Price</th>
+                                        <th>Exchange</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredProducts.map(p => (
+                                        <tr key={p.id}>
+                                            <td><span className={`badge ${p.type === 'service' ? 'badge-info' : 'badge-success'}`}>{p.type}</span></td>
+                                            <td>{p.code || '—'}</td>
+                                            <td><strong>{p.name}</strong></td>
+                                            <td>{p.category || '—'}</td>
+                                            <td>${parseFloat(p.default_price).toFixed(2)}</td>
+                                            <td>{p.is_exchangeable ? `Yes (+$${parseFloat(p.deposit_amount || 0).toFixed(2)})` : '—'}</td>
+                                            <td><span className={`badge ${p.status === 'active' ? 'badge-success' : 'badge-warning'}`}>{p.status}</span></td>
+                                            <td>
+                                                <button className="btn btn-sm btn-secondary" onClick={() => { setEditItem(p); setShowModal(true); }}>Edit</button>
+                                                <button className="btn btn-sm btn-danger" style={{marginLeft:'0.5rem'}} onClick={() => handleDelete(p.id)}>Delete</button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {filteredProducts.length === 0 && (
+                                        <tr><td colSpan="8" style={{textAlign:'center',padding:'2rem',color:'var(--text-muted)'}}>No products found. Add your first product!</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {showModal && (
+                        <EntityModal
+                            title={editItem ? 'Edit Product' : 'Add Product'}
+                            fields={formFields}
+                            data={editItem || { type: 'product', status: 'active', unit: 'each' }}
+                            onSave={handleSave}
+                            onClose={() => { setShowModal(false); setEditItem(null); }}
+                        />
+                    )}
+                </>
+            );
+        }
+
+        // =====================================================
+        // COMPANY SETTINGS VIEW (Admin Only)
+        // =====================================================
+        function CompanySettingsView({ onRefresh }) {
+            const [settings, setSettings] = useState({
+                delivery_model: 'gallons',
+                track_empties: false,
+                track_truck_inventory: false
+            });
+            const [loading, setLoading] = useState(true);
+            const [saving, setSaving] = useState(false);
+
+            useEffect(() => {
+                loadSettings();
+            }, []);
+
+            const loadSettings = async () => {
+                try {
+                    // Get company settings from auth/me
+                    const data = await api.request('/auth/me');
+                    // For now, use defaults - we'd need to add these to company table
+                    setSettings({
+                        delivery_model: data.company?.delivery_model || 'gallons',
+                        track_empties: data.company?.track_empties || false,
+                        track_truck_inventory: data.company?.track_truck_inventory || false
+                    });
+                } catch (err) {
+                    console.error('Failed to load settings:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleSave = async () => {
+                setSaving(true);
+                try {
+                    await api.request('/data/company-settings', {
+                        method: 'PUT',
+                        body: JSON.stringify(settings)
+                    });
+                    alert('Settings saved!');
+                } catch (err) {
+                    alert('Error: ' + err.message);
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            if (loading) {
+                return <div style={{textAlign:'center',padding:'2rem'}}><div className="spinner"></div></div>;
+            }
+
+            return (
+                <>
+                    <div className="page-header">
+                        <h1 className="page-title">⚙️ Company Settings</h1>
+                    </div>
+
+                    <div className="card" style={{maxWidth:'600px'}}>
+                        <h3 style={{marginBottom:'1.5rem'}}>Delivery Model</h3>
+                        
+                        <div className="form-group">
+                            <label className="form-label">How do your drivers record deliveries?</label>
+                            <select 
+                                className="form-input"
+                                value={settings.delivery_model}
+                                onChange={(e) => setSettings({...settings, delivery_model: e.target.value})}
+                            >
+                                <option value="gallons">Gallons (bulk propane delivery)</option>
+                                <option value="products">Products (bottles, tanks, items)</option>
+                                <option value="services">Services (installations, repairs)</option>
+                                <option value="mixed">Mixed (products + services)</option>
+                            </select>
+                            <div style={{fontSize:'0.85rem',color:'var(--text-muted)',marginTop:'0.5rem'}}>
+                                {settings.delivery_model === 'gallons' && 'Drivers enter gallons delivered at each stop.'}
+                                {settings.delivery_model === 'products' && 'Drivers select products and quantities at each stop.'}
+                                {settings.delivery_model === 'services' && 'Drivers select services performed at each stop.'}
+                                {settings.delivery_model === 'mixed' && 'Drivers can record both products and services.'}
+                            </div>
+                        </div>
+
+                        {(settings.delivery_model === 'products' || settings.delivery_model === 'mixed') && (
+                            <>
+                                <div className="form-group" style={{marginTop:'1.5rem'}}>
+                                    <label style={{display:'flex',alignItems:'center',gap:'0.75rem',cursor:'pointer'}}>
+                                        <input 
+                                            type="checkbox"
+                                            checked={settings.track_empties}
+                                            onChange={(e) => setSettings({...settings, track_empties: e.target.checked})}
+                                            style={{width:'20px',height:'20px'}}
+                                        />
+                                        <div>
+                                            <div style={{fontWeight:'500'}}>Track Empty Returns</div>
+                                            <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Drivers can record empty bottles collected</div>
+                                        </div>
+                                    </label>
+                                </div>
+
+                                <div className="form-group" style={{marginTop:'1rem'}}>
+                                    <label style={{display:'flex',alignItems:'center',gap:'0.75rem',cursor:'pointer'}}>
+                                        <input 
+                                            type="checkbox"
+                                            checked={settings.track_truck_inventory}
+                                            onChange={(e) => setSettings({...settings, track_truck_inventory: e.target.checked})}
+                                            style={{width:'20px',height:'20px'}}
+                                        />
+                                        <div>
+                                            <div style={{fontWeight:'500'}}>Track Truck Inventory</div>
+                                            <div style={{fontSize:'0.85rem',color:'var(--text-muted)'}}>Track product quantities on each truck</div>
+                                        </div>
+                                    </label>
+                                </div>
+                            </>
+                        )}
+
+                        <button className="btn btn-primary" style={{marginTop:'2rem'}} onClick={handleSave} disabled={saving}>
+                            {saving ? 'Saving...' : '💾 Save Settings'}
+                        </button>
+                    </div>
+
+                    {settings.delivery_model !== 'gallons' && (
+                        <div className="card" style={{maxWidth:'600px',marginTop:'1.5rem'}}>
+                            <h3>Next Steps</h3>
+                            <ol style={{paddingLeft:'1.25rem',marginTop:'1rem',lineHeight:'1.8'}}>
+                                <li>Go to <strong>Products & Services</strong> to add your items</li>
+                                <li>Set prices and deposit amounts for exchangeable items</li>
+                                <li>Optionally set customer-specific pricing in Customer details</li>
+                                <li>If tracking inventory, load trucks before routes</li>
+                            </ol>
+                        </div>
+                    )}
+                </>
+            );
+        }
+
+        // =====================================================
         // USERS VIEW (Admin Only)
         // =====================================================
         function UsersView({ data, onRefresh }) {
@@ -7680,6 +7978,8 @@
             const [selectedRoute, setSelectedRoute] = useState(null);
             const [loading, setLoading] = useState(true);
             const [toast, setToast] = useState(null);
+            const [deliverySettings, setDeliverySettings] = useState({ deliveryModel: 'gallons', trackEmpties: false, trackInventory: false });
+            const [products, setProducts] = useState([]);
 
             useEffect(() => {
                 loadDriverData();
@@ -7692,6 +7992,8 @@
                     setRoutes(data.routes || []);
                     if (data.driver) setDriverInfo(data.driver);
                     if (data.truck) setTruckInfo(data.truck);
+                    if (data.settings) setDeliverySettings(data.settings);
+                    if (data.products) setProducts(data.products);
                 } catch (err) {
                     if (err.message.includes('No driver profile')) {
                         showToast('Your account is not linked to a driver profile. Contact your dispatcher.', 'error');
@@ -7750,6 +8052,8 @@
                         route={selectedRoute} 
                         driverInfo={driverInfo}
                         truckInfo={truckInfo}
+                        deliverySettings={deliverySettings}
+                        products={products}
                         onBack={() => { setSelectedRoute(null); loadDriverData(); }}
                         showToast={showToast}
                     />
@@ -7865,11 +8169,12 @@
         }
 
         // Driver Route Detail Component
-        function DriverRouteDetail({ route, driverInfo, truckInfo, onBack, showToast }) {
+        function DriverRouteDetail({ route, driverInfo, truckInfo, deliverySettings, products, onBack, showToast }) {
             const [routeData, setRouteData] = useState(null);
             const [loading, setLoading] = useState(true);
             const [selectedStop, setSelectedStop] = useState(null);
             const [expandedStop, setExpandedStop] = useState(null);
+            const [customerProducts, setCustomerProducts] = useState([]);
 
             useEffect(() => {
                 loadRouteDetails();
@@ -7900,13 +8205,36 @@
                 }
             };
 
+            const loadCustomerProducts = async (customerId) => {
+                try {
+                    const data = await api.request(`/routes-v2/customer-products/${customerId}`);
+                    setCustomerProducts(data.products || []);
+                } catch (err) {
+                    // Fallback to general products list
+                    setCustomerProducts(products);
+                }
+            };
+
+            const openStopCompletion = async (stop) => {
+                if (deliverySettings.deliveryModel === 'products' || deliverySettings.deliveryModel === 'mixed') {
+                    await loadCustomerProducts(stop.customer_id);
+                }
+                setSelectedStop(stop);
+            };
+
             const completeStop = async (stopId, data) => {
                 try {
-                    await api.request(`/routes-v2/runs/${route.id}/stops/${stopId}/complete`, {
+                    // Choose endpoint based on delivery model
+                    const endpoint = data.items 
+                        ? `/routes-v2/runs/${route.id}/stops/${stopId}/complete-products`
+                        : `/routes-v2/runs/${route.id}/stops/${stopId}/complete`;
+                    
+                    await api.request(endpoint, {
                         method: 'POST',
                         body: JSON.stringify(data)
                     });
                     setSelectedStop(null);
+                    setCustomerProducts([]);
                     loadRouteDetails();
                     showToast('Stop completed!', 'success');
                 } catch (err) {
@@ -8098,7 +8426,7 @@
                                                     <button className="btn btn-primary" style={{padding:'0.875rem'}} onClick={() => navigateToStop(stop)}>
                                                         🧭 Navigate
                                                     </button>
-                                                    <button className="btn btn-success" style={{padding:'0.875rem'}} onClick={() => setSelectedStop(stop)}>
+                                                    <button className="btn btn-success" style={{padding:'0.875rem'}} onClick={() => openStopCompletion(stop)}>
                                                         ✓ Complete
                                                     </button>
                                                 </div>
@@ -8127,9 +8455,11 @@
                     {selectedStop && (
                         <CompleteStopModal
                             stop={selectedStop}
+                            deliverySettings={deliverySettings}
+                            products={customerProducts.length > 0 ? customerProducts : products}
                             onComplete={(data) => completeStop(selectedStop.id, data)}
                             onSkip={(reason) => skipStop(selectedStop.id, reason)}
-                            onClose={() => setSelectedStop(null)}
+                            onClose={() => { setSelectedStop(null); setCustomerProducts([]); }}
                             onNavigate={() => navigateToStop(selectedStop)}
                             onCall={() => callCustomer(selectedStop.phone)}
                         />
@@ -8138,28 +8468,99 @@
             );
         }
 
-        // Complete Stop Modal (shared)
-        function CompleteStopModal({ stop, onComplete, onSkip, onClose, onNavigate, onCall }) {
+        // Complete Stop Modal (shared) - Supports both gallons and products
+        function CompleteStopModal({ stop, deliverySettings, products, onComplete, onSkip, onClose, onNavigate, onCall }) {
+            const [mode, setMode] = useState(deliverySettings?.deliveryModel || 'gallons');
             const [gallons, setGallons] = useState('');
             const [tankAfter, setTankAfter] = useState('');
             const [notes, setNotes] = useState('');
             const [loading, setLoading] = useState(false);
             const [showSkip, setShowSkip] = useState(false);
             const [skipReason, setSkipReason] = useState('');
+            
+            // Product quantities: { productId: { delivered: 0, collected: 0 } }
+            const [productQtys, setProductQtys] = useState({});
 
+            const isProductMode = mode === 'products' || mode === 'mixed';
+            const trackEmpties = deliverySettings?.trackEmpties || false;
             const estimatedGallons = Math.round(stop.tank_size_gallons * (1 - (stop.tank_level_before || 50) / 100));
 
-            const handleComplete = async () => {
-                if (!gallons || parseFloat(gallons) <= 0) {
-                    alert('Please enter gallons delivered');
-                    return;
-                }
-                setLoading(true);
-                await onComplete({
-                    gallons_delivered: parseFloat(gallons),
-                    tank_level_after: tankAfter ? parseInt(tankAfter) : null,
-                    notes
+            const updateProductQty = (productId, field, delta) => {
+                setProductQtys(prev => {
+                    const current = prev[productId] || { delivered: 0, collected: 0 };
+                    const newValue = Math.max(0, (current[field] || 0) + delta);
+                    return { ...prev, [productId]: { ...current, [field]: newValue } };
                 });
+            };
+
+            const getProductQty = (productId, field) => {
+                return productQtys[productId]?.[field] || 0;
+            };
+
+            const calculateTotals = () => {
+                let itemsTotal = 0;
+                let depositsCollected = 0;
+                let depositsRefunded = 0;
+                
+                (products || []).forEach(p => {
+                    const qty = productQtys[p.id];
+                    if (qty) {
+                        const delivered = qty.delivered || 0;
+                        const collected = qty.collected || 0;
+                        const price = parseFloat(p.effective_price || p.default_price) || 0;
+                        const deposit = parseFloat(p.deposit_amount) || 0;
+                        
+                        itemsTotal += delivered * price;
+                        
+                        if (p.is_exchangeable && deposit > 0) {
+                            if (delivered > collected) {
+                                depositsCollected += (delivered - collected) * deposit;
+                            } else if (collected > delivered) {
+                                depositsRefunded += (collected - delivered) * deposit;
+                            }
+                        }
+                    }
+                });
+                
+                return { itemsTotal, depositsCollected, depositsRefunded, total: itemsTotal + depositsCollected - depositsRefunded };
+            };
+
+            const handleComplete = async () => {
+                setLoading(true);
+                
+                if (isProductMode) {
+                    // Build items array
+                    const items = [];
+                    (products || []).forEach(p => {
+                        const qty = productQtys[p.id];
+                        if (qty && (qty.delivered > 0 || qty.collected > 0)) {
+                            items.push({
+                                product_id: p.id,
+                                quantity_delivered: qty.delivered || 0,
+                                quantity_collected: qty.collected || 0
+                            });
+                        }
+                    });
+                    
+                    if (items.length === 0) {
+                        alert('Please add at least one product');
+                        setLoading(false);
+                        return;
+                    }
+                    
+                    await onComplete({ items, notes });
+                } else {
+                    if (!gallons || parseFloat(gallons) <= 0) {
+                        alert('Please enter gallons delivered');
+                        setLoading(false);
+                        return;
+                    }
+                    await onComplete({
+                        gallons_delivered: parseFloat(gallons),
+                        tank_level_after: tankAfter ? parseInt(tankAfter) : null,
+                        notes
+                    });
+                }
                 setLoading(false);
             };
 
@@ -8194,10 +8595,35 @@
                 .info-value.large { font-size: 1.5rem; font-weight: 700; }
                 .gallon-input { width: 100%; padding: 1rem; font-size: 2rem; text-align: center; font-weight: 700; border-radius: 12px; border: 2px solid var(--border-color); background: var(--bg-input); color: var(--text-primary); }
                 .gallon-input:focus { border-color: var(--primary); outline: none; }
+                .product-row { display: flex; align-items: center; padding: 0.75rem; background: var(--bg-input); border-radius: 12px; margin-bottom: 0.5rem; }
+                .product-info { flex: 1; min-width: 0; }
+                .product-name { font-weight: 600; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .product-price { font-size: 0.8rem; color: var(--text-muted); }
+                .product-qty-controls { display: flex; align-items: center; gap: 0.5rem; }
+                .qty-btn { width: 36px; height: 36px; border-radius: 8px; border: none; font-size: 1.25rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+                .qty-btn.minus { background: var(--danger); color: white; }
+                .qty-btn.plus { background: var(--success); color: white; }
+                .qty-btn:disabled { opacity: 0.3; }
+                .qty-value { min-width: 32px; text-align: center; font-size: 1.1rem; font-weight: 700; }
+                .empties-section { margin-left: 0.5rem; padding-left: 0.5rem; border-left: 1px solid var(--border-color); }
+                .empties-label { font-size: 0.65rem; color: var(--text-muted); text-align: center; margin-bottom: 2px; }
+                .totals-section { background: var(--primary); padding: 1rem; border-radius: 12px; margin-top: 1rem; }
+                .totals-row { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 0.25rem; }
+                .totals-row.total { font-size: 1.25rem; font-weight: 700; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.3); }
+                .category-header { font-size: 0.8rem; color: var(--text-muted); margin: 1rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.5px; }
             `;
 
             const tankLevel = stop.tank_level_before || 50;
             const tankClass = tankLevel <= 25 ? 'tank-low' : tankLevel <= 50 ? 'tank-medium' : 'tank-ok';
+            const totals = calculateTotals();
+
+            // Group products by category
+            const groupedProducts = (products || []).reduce((acc, p) => {
+                const cat = p.category || 'Other';
+                if (!acc[cat]) acc[cat] = [];
+                acc[cat].push(p);
+                return acc;
+            }, {});
 
             return (
                 <div className="complete-modal" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -8228,44 +8654,148 @@
                                     </div>
 
                                     <div className="info-grid">
-                                        <div className="info-item">
-                                            <div className="info-label">Tank Size</div>
-                                            <div className="info-value large">{stop.tank_size_gallons}g</div>
-                                        </div>
-                                        <div className="info-item">
-                                            <div className="info-label">Current Level</div>
-                                            <div className={`info-value large ${tankClass}`}>{tankLevel}%</div>
-                                        </div>
                                         <div className="info-item full">
                                             <div className="info-label">Address</div>
                                             <div className="info-value">{stop.address}, {stop.city}, {stop.state}</div>
                                         </div>
                                     </div>
 
-                                    <div className="form-group">
-                                        <label className="form-label">Gallons Delivered *</label>
-                                        <input 
-                                            type="number" 
-                                            className="gallon-input" 
-                                            value={gallons}
-                                            onChange={(e) => setGallons(e.target.value)}
-                                            placeholder={estimatedGallons.toString()}
-                                            inputMode="decimal"
-                                        />
-                                        <div style={{textAlign:'center',marginTop:'0.5rem',color:'var(--text-muted)',fontSize:'0.85rem'}}>
-                                            Est. ~{estimatedGallons} gal needed
-                                        </div>
-                                    </div>
+                                    {/* Product Mode */}
+                                    {isProductMode && (
+                                        <>
+                                            <div style={{fontWeight:'600',marginBottom:'0.75rem'}}>Products Delivered</div>
+                                            
+                                            {Object.entries(groupedProducts).map(([category, catProducts]) => (
+                                                <div key={category}>
+                                                    <div className="category-header">{category}</div>
+                                                    {catProducts.map(product => (
+                                                        <div key={product.id} className="product-row">
+                                                            <div className="product-info">
+                                                                <div className="product-name">{product.name}</div>
+                                                                <div className="product-price">
+                                                                    ${parseFloat(product.effective_price || product.default_price).toFixed(2)}
+                                                                    {product.is_exchangeable && ` (+$${parseFloat(product.deposit_amount).toFixed(2)} dep)`}
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            <div className="product-qty-controls">
+                                                                <button 
+                                                                    className="qty-btn minus" 
+                                                                    onClick={() => updateProductQty(product.id, 'delivered', -1)}
+                                                                    disabled={getProductQty(product.id, 'delivered') === 0}
+                                                                >−</button>
+                                                                <div className="qty-value">{getProductQty(product.id, 'delivered')}</div>
+                                                                <button 
+                                                                    className="qty-btn plus" 
+                                                                    onClick={() => updateProductQty(product.id, 'delivered', 1)}
+                                                                >+</button>
+                                                                
+                                                                {trackEmpties && product.is_exchangeable && (
+                                                                    <div className="empties-section">
+                                                                        <div className="empties-label">Empties</div>
+                                                                        <div style={{display:'flex',alignItems:'center',gap:'0.25rem'}}>
+                                                                            <button 
+                                                                                className="qty-btn minus" 
+                                                                                style={{width:'28px',height:'28px',fontSize:'1rem'}}
+                                                                                onClick={() => updateProductQty(product.id, 'collected', -1)}
+                                                                                disabled={getProductQty(product.id, 'collected') === 0}
+                                                                            >−</button>
+                                                                            <div className="qty-value" style={{minWidth:'24px',fontSize:'0.95rem'}}>{getProductQty(product.id, 'collected')}</div>
+                                                                            <button 
+                                                                                className="qty-btn plus" 
+                                                                                style={{width:'28px',height:'28px',fontSize:'1rem'}}
+                                                                                onClick={() => updateProductQty(product.id, 'collected', 1)}
+                                                                            >+</button>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ))}
 
+                                            {/* Totals */}
+                                            {totals.total > 0 && (
+                                                <div className="totals-section">
+                                                    <div className="totals-row">
+                                                        <span>Items</span>
+                                                        <span>${totals.itemsTotal.toFixed(2)}</span>
+                                                    </div>
+                                                    {totals.depositsCollected > 0 && (
+                                                        <div className="totals-row">
+                                                            <span>Deposits</span>
+                                                            <span>+${totals.depositsCollected.toFixed(2)}</span>
+                                                        </div>
+                                                    )}
+                                                    {totals.depositsRefunded > 0 && (
+                                                        <div className="totals-row">
+                                                            <span>Deposit Refunds</span>
+                                                            <span>-${totals.depositsRefunded.toFixed(2)}</span>
+                                                        </div>
+                                                    )}
+                                                    <div className="totals-row total">
+                                                        <span>Total</span>
+                                                        <span>${totals.total.toFixed(2)}</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+
+                                    {/* Gallons Mode */}
+                                    {!isProductMode && (
+                                        <>
+                                            <div className="info-grid">
+                                                <div className="info-item">
+                                                    <div className="info-label">Tank Size</div>
+                                                    <div className="info-value large">{stop.tank_size_gallons}g</div>
+                                                </div>
+                                                <div className="info-item">
+                                                    <div className="info-label">Current Level</div>
+                                                    <div className={`info-value large ${tankClass}`}>{tankLevel}%</div>
+                                                </div>
+                                            </div>
+
+                                            <div className="form-group">
+                                                <label className="form-label">Gallons Delivered *</label>
+                                                <input 
+                                                    type="number" 
+                                                    className="gallon-input" 
+                                                    value={gallons}
+                                                    onChange={(e) => setGallons(e.target.value)}
+                                                    placeholder={estimatedGallons.toString()}
+                                                    inputMode="decimal"
+                                                />
+                                                <div style={{textAlign:'center',marginTop:'0.5rem',color:'var(--text-muted)',fontSize:'0.85rem'}}>
+                                                    Est. ~{estimatedGallons} gal needed
+                                                </div>
+                                            </div>
+
+                                            <div className="form-group" style={{marginTop:'1rem'}}>
+                                                <label className="form-label">Tank Level After (optional)</label>
+                                                <input 
+                                                    type="number" 
+                                                    className="form-input" 
+                                                    value={tankAfter}
+                                                    onChange={(e) => setTankAfter(e.target.value)}
+                                                    placeholder="e.g., 80"
+                                                    inputMode="numeric"
+                                                />
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {/* Notes */}
                                     <div className="form-group" style={{marginTop:'1rem'}}>
-                                        <label className="form-label">Tank Level After (optional)</label>
-                                        <input 
-                                            type="number" 
+                                        <label className="form-label">Notes (optional)</label>
+                                        <textarea 
                                             className="form-input" 
-                                            value={tankAfter}
-                                            onChange={(e) => setTankAfter(e.target.value)}
-                                            placeholder="e.g., 80"
-                                            inputMode="numeric"
+                                            value={notes}
+                                            onChange={(e) => setNotes(e.target.value)}
+                                            placeholder="Any notes..."
+                                            rows={2}
+                                            style={{resize:'none'}}
                                         />
                                     </div>
                                 </>
@@ -8285,11 +8815,11 @@
                                         >
                                             <option value="">Select reason...</option>
                                             <option value="Customer not home">Customer not home</option>
-                                            <option value="Unable to access tank">Unable to access tank</option>
+                                            <option value="Unable to access">Unable to access</option>
                                             <option value="Customer refused">Customer refused</option>
                                             <option value="Road blocked">Road blocked</option>
-                                            <option value="Tank full">Tank already full</option>
-                                            <option value="Weather">Weather conditions</option>
+                                            <option value="Already full">Already full</option>
+                                            <option value="Weather">Weather</option>
                                             <option value="Other">Other</option>
                                         </select>
                                     </div>
