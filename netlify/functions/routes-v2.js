@@ -147,39 +147,60 @@ async function getDriverRoutes(user, companyId, event) {
     
     const driverInfo = driverResult.rows[0] || null;
     
-    // Get company delivery settings
-    const companySettings = await query(
-        `SELECT delivery_model, track_empties, track_truck_inventory
-         FROM companies WHERE id = $1`,
-        [companyId]
-    );
-    const settings = companySettings.rows[0] || { delivery_model: 'gallons' };
+    // Get company delivery settings - handle case where columns don't exist yet
+    let settings = { delivery_model: 'gallons', track_empties: false, track_truck_inventory: false };
+    try {
+        const companySettings = await query(
+            `SELECT 
+                COALESCE(delivery_model, 'gallons') as delivery_model,
+                COALESCE(track_empties, false) as track_empties,
+                COALESCE(track_truck_inventory, false) as track_truck_inventory
+             FROM companies WHERE id = $1`,
+            [companyId]
+        );
+        if (companySettings.rows[0]) {
+            settings = companySettings.rows[0];
+        }
+    } catch (e) {
+        // Columns don't exist yet - use defaults (gallons mode)
+        console.log('Products feature not migrated yet, using gallons mode');
+    }
     
     // If product-based delivery, get the products list
     let products = [];
     if (settings.delivery_model === 'products' || settings.delivery_model === 'mixed') {
-        const productsResult = await query(
-            `SELECT id, type, code, name, category, unit, default_price, 
-                    gallon_equivalent, is_exchangeable, deposit_amount, sort_order
-             FROM products 
-             WHERE company_id = $1 AND status = 'active'
-             ORDER BY sort_order, category, name`,
-            [companyId]
-        );
-        products = productsResult.rows;
+        try {
+            const productsResult = await query(
+                `SELECT id, type, code, name, category, unit, default_price, 
+                        gallon_equivalent, is_exchangeable, deposit_amount, sort_order
+                 FROM products 
+                 WHERE company_id = $1 AND status = 'active'
+                 ORDER BY sort_order, category, name`,
+                [companyId]
+            );
+            products = productsResult.rows;
+        } catch (e) {
+            // Products table doesn't exist yet
+            console.log('Products table not created yet');
+        }
     }
     
     // Get truck inventory if tracking enabled
     let truckInventory = [];
     if (settings.track_truck_inventory && driverInfo?.truck_id) {
-        const invResult = await query(
-            `SELECT ti.product_id, ti.quantity, p.code as product_code, p.name as product_name
-             FROM truck_inventory ti
-             JOIN products p ON ti.product_id = p.id
-             WHERE ti.truck_id = $1 AND p.status = 'active'`,
-            [driverInfo.truck_id]
-        );
-        truckInventory = invResult.rows;
+        try {
+            const invResult = await query(
+                `SELECT ti.product_id, ti.quantity, p.code as product_code, p.name as product_name
+                 FROM truck_inventory ti
+                 JOIN products p ON ti.product_id = p.id
+                 WHERE ti.truck_id = $1 AND p.status = 'active'`,
+                [driverInfo.truck_id]
+            );
+            truckInventory = invResult.rows;
+        } catch (e) {
+            // Inventory tables don't exist yet
+            console.log('Inventory tables not created yet');
+        }
     }
     
     return success({
@@ -226,35 +247,44 @@ async function getCustomerProductsForDriver(companyId, customerId) {
     }
 
     // Get all active products with customer-specific pricing
-    const result = await query(
-        `SELECT 
-            p.id,
-            p.type,
-            p.code,
-            p.name,
-            p.category,
-            p.unit,
-            p.default_price,
-            p.gallon_equivalent,
-            p.is_exchangeable,
-            p.deposit_amount,
-            p.track_inventory,
-            p.sort_order,
-            cp.custom_price,
-            COALESCE(cp.is_enabled, true) as is_enabled,
-            COALESCE(cp.custom_price, p.default_price) as effective_price
-         FROM products p
-         LEFT JOIN customer_products cp ON p.id = cp.product_id AND cp.customer_id = $1
-         WHERE p.company_id = $2 AND p.status = 'active'
-         AND COALESCE(cp.is_enabled, true) = true
-         ORDER BY p.sort_order, p.category, p.name`,
-        [customerId, companyId]
-    );
+    try {
+        const result = await query(
+            `SELECT 
+                p.id,
+                p.type,
+                p.code,
+                p.name,
+                p.category,
+                p.unit,
+                p.default_price,
+                p.gallon_equivalent,
+                p.is_exchangeable,
+                p.deposit_amount,
+                p.track_inventory,
+                p.sort_order,
+                cp.custom_price,
+                COALESCE(cp.is_enabled, true) as is_enabled,
+                COALESCE(cp.custom_price, p.default_price) as effective_price
+             FROM products p
+             LEFT JOIN customer_products cp ON p.id = cp.product_id AND cp.customer_id = $1
+             WHERE p.company_id = $2 AND p.status = 'active'
+             AND COALESCE(cp.is_enabled, true) = true
+             ORDER BY p.sort_order, p.category, p.name`,
+            [customerId, companyId]
+        );
 
-    return success({
-        customer: customerCheck.rows[0],
-        products: result.rows
-    });
+        return success({
+            customer: customerCheck.rows[0],
+            products: result.rows
+        });
+    } catch (e) {
+        // Products table doesn't exist yet
+        console.log('Products table not available:', e.message);
+        return success({
+            customer: customerCheck.rows[0],
+            products: []
+        });
+    }
 }
 
 // =====================================================

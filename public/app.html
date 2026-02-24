@@ -5797,6 +5797,8 @@
             const [showModal, setShowModal] = useState(false);
             const [editItem, setEditItem] = useState(null);
             const [filter, setFilter] = useState('all');
+            const [migrationNeeded, setMigrationNeeded] = useState(false);
+            const [errorMessage, setErrorMessage] = useState('');
 
             useEffect(() => {
                 loadProducts();
@@ -5804,10 +5806,19 @@
 
             const loadProducts = async () => {
                 try {
+                    setLoading(true);
+                    setMigrationNeeded(false);
+                    setErrorMessage('');
                     const data = await api.request('/products');
                     setProducts(data);
                 } catch (err) {
                     console.error('Failed to load products:', err);
+                    if (err.message.includes('migration') || err.message.includes('does not exist')) {
+                        setMigrationNeeded(true);
+                        setErrorMessage(err.message);
+                    } else {
+                        setErrorMessage(err.message);
+                    }
                 } finally {
                     setLoading(false);
                 }
@@ -5882,57 +5893,79 @@
                 <>
                     <div className="page-header">
                         <h1 className="page-title">📦 Products & Services</h1>
-                        <button className="btn btn-primary" onClick={() => { setEditItem(null); setShowModal(true); }}>+ Add Product</button>
+                        {!migrationNeeded && <button className="btn btn-primary" onClick={() => { setEditItem(null); setShowModal(true); }}>+ Add Product</button>}
                     </div>
 
-                    <div style={{marginBottom:'1rem',display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
-                        <button className={`btn btn-sm ${filter === 'all' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('all')}>All</button>
-                        <button className={`btn btn-sm ${filter === 'products' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('products')}>Products</button>
-                        <button className={`btn btn-sm ${filter === 'services' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('services')}>Services</button>
-                        {categories.map(cat => (
-                            <button key={cat} className={`btn btn-sm ${filter === cat ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter(cat)}>{cat}</button>
-                        ))}
-                    </div>
-
-                    {loading ? (
-                        <div style={{textAlign:'center',padding:'2rem'}}><div className="spinner"></div></div>
-                    ) : (
-                        <div className="table-container">
-                            <table className="table">
-                                <thead>
-                                    <tr>
-                                        <th>Type</th>
-                                        <th>Code</th>
-                                        <th>Name</th>
-                                        <th>Category</th>
-                                        <th>Price</th>
-                                        <th>Exchange</th>
-                                        <th>Status</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {filteredProducts.map(p => (
-                                        <tr key={p.id}>
-                                            <td><span className={`badge ${p.type === 'service' ? 'badge-info' : 'badge-success'}`}>{p.type}</span></td>
-                                            <td>{p.code || '—'}</td>
-                                            <td><strong>{p.name}</strong></td>
-                                            <td>{p.category || '—'}</td>
-                                            <td>${parseFloat(p.default_price).toFixed(2)}</td>
-                                            <td>{p.is_exchangeable ? `Yes (+$${parseFloat(p.deposit_amount || 0).toFixed(2)})` : '—'}</td>
-                                            <td><span className={`badge ${p.status === 'active' ? 'badge-success' : 'badge-warning'}`}>{p.status}</span></td>
-                                            <td>
-                                                <button className="btn btn-sm btn-secondary" onClick={() => { setEditItem(p); setShowModal(true); }}>Edit</button>
-                                                <button className="btn btn-sm btn-danger" style={{marginLeft:'0.5rem'}} onClick={() => handleDelete(p.id)}>Delete</button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {filteredProducts.length === 0 && (
-                                        <tr><td colSpan="8" style={{textAlign:'center',padding:'2rem',color:'var(--text-muted)'}}>No products found. Add your first product!</td></tr>
-                                    )}
-                                </tbody>
-                            </table>
+                    {migrationNeeded ? (
+                        <div className="card" style={{maxWidth:'600px',borderColor:'var(--warning)'}}>
+                            <div className="card-header" style={{background:'rgba(245,158,11,0.1)'}}>
+                                <h3 style={{color:'var(--warning)'}}>⚠️ Database Migration Required</h3>
+                            </div>
+                            <div className="card-body">
+                                <p style={{marginBottom:'1rem'}}>The Products feature requires a database migration to be run first.</p>
+                                <p style={{marginBottom:'1rem',color:'var(--text-muted)'}}><strong>Error:</strong> {errorMessage}</p>
+                                <h4 style={{marginBottom:'0.5rem'}}>To enable Products:</h4>
+                                <ol style={{paddingLeft:'1.25rem',lineHeight:'1.8'}}>
+                                    <li>Open your <strong>Neon Console</strong></li>
+                                    <li>Go to the <strong>SQL Editor</strong></li>
+                                    <li>Run the <strong>products-schema.sql</strong> migration file</li>
+                                    <li>Refresh this page</li>
+                                </ol>
+                                <button className="btn btn-primary" style={{marginTop:'1rem'}} onClick={loadProducts}>🔄 Retry</button>
+                            </div>
                         </div>
+                    ) : (
+                        <>
+                            <div style={{marginBottom:'1rem',display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                                <button className={`btn btn-sm ${filter === 'all' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('all')}>All</button>
+                                <button className={`btn btn-sm ${filter === 'products' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('products')}>Products</button>
+                                <button className={`btn btn-sm ${filter === 'services' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('services')}>Services</button>
+                                {categories.map(cat => (
+                                    <button key={cat} className={`btn btn-sm ${filter === cat ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter(cat)}>{cat}</button>
+                                ))}
+                            </div>
+
+                            {loading ? (
+                                <div style={{textAlign:'center',padding:'2rem'}}><div className="spinner"></div></div>
+                            ) : (
+                                <div className="table-container">
+                                    <table className="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Type</th>
+                                                <th>Code</th>
+                                                <th>Name</th>
+                                                <th>Category</th>
+                                                <th>Price</th>
+                                                <th>Exchange</th>
+                                                <th>Status</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {filteredProducts.map(p => (
+                                                <tr key={p.id}>
+                                                    <td><span className={`badge ${p.type === 'service' ? 'badge-info' : 'badge-success'}`}>{p.type}</span></td>
+                                                    <td>{p.code || '—'}</td>
+                                                    <td><strong>{p.name}</strong></td>
+                                                    <td>{p.category || '—'}</td>
+                                                    <td>${parseFloat(p.default_price).toFixed(2)}</td>
+                                                    <td>{p.is_exchangeable ? `Yes (+$${parseFloat(p.deposit_amount || 0).toFixed(2)})` : '—'}</td>
+                                                    <td><span className={`badge ${p.status === 'active' ? 'badge-success' : 'badge-warning'}`}>{p.status}</span></td>
+                                                    <td>
+                                                        <button className="btn btn-sm btn-secondary" onClick={() => { setEditItem(p); setShowModal(true); }}>Edit</button>
+                                                        <button className="btn btn-sm btn-danger" style={{marginLeft:'0.5rem'}} onClick={() => handleDelete(p.id)}>Delete</button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {filteredProducts.length === 0 && (
+                                                <tr><td colSpan="8" style={{textAlign:'center',padding:'2rem',color:'var(--text-muted)'}}>No products found. Add your first product!</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </>
                     )}
 
                     {showModal && (

@@ -5,6 +5,20 @@ const { query } = require('./utils/db');
 const { requireAuth, requireRole } = require('./utils/auth');
 const { success, error, handleOptions, parseBody } = require('./utils/response');
 
+// Check if products table exists and create if needed
+async function ensureProductsTable(companyId) {
+    try {
+        // Try a simple query to see if table exists
+        await query('SELECT 1 FROM products LIMIT 1');
+        return true;
+    } catch (e) {
+        if (e.message.includes('does not exist')) {
+            return false;
+        }
+        throw e;
+    }
+}
+
 exports.handler = async (event, context) => {
     if (event.httpMethod === 'OPTIONS') {
         return handleOptions();
@@ -21,6 +35,12 @@ exports.handler = async (event, context) => {
     const method = event.httpMethod;
 
     try {
+        // Check if products feature is available
+        const tableExists = await ensureProductsTable(companyId);
+        if (!tableExists) {
+            return error('Products feature requires database migration. Please run the products-schema.sql migration in your database.', 400);
+        }
+
         // =====================================================
         // PRODUCTS CATALOG
         // =====================================================

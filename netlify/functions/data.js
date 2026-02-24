@@ -71,21 +71,36 @@ exports.handler = async (event, context) => {
                 return error('Admin access required', 403);
             }
             const body = parseBody(event);
-            await query(
-                `UPDATE companies SET 
-                    delivery_model = $1,
-                    track_empties = $2,
-                    track_truck_inventory = $3,
-                    updated_at = NOW()
-                 WHERE id = $4`,
-                [
-                    body.delivery_model || 'gallons',
-                    body.track_empties || false,
-                    body.track_truck_inventory || false,
-                    companyId
-                ]
-            );
-            return success({ message: 'Settings saved' });
+            
+            // First, try to add the columns if they don't exist
+            try {
+                await query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS delivery_model VARCHAR(20) DEFAULT 'gallons'`);
+                await query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS track_empties BOOLEAN DEFAULT false`);
+                await query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS track_truck_inventory BOOLEAN DEFAULT false`);
+            } catch (alterErr) {
+                console.log('Columns may already exist or cannot be added:', alterErr.message);
+            }
+            
+            // Now update the settings
+            try {
+                await query(
+                    `UPDATE companies SET 
+                        delivery_model = $1,
+                        track_empties = $2,
+                        track_truck_inventory = $3,
+                        updated_at = NOW()
+                     WHERE id = $4`,
+                    [
+                        body.delivery_model || 'gallons',
+                        body.track_empties || false,
+                        body.track_truck_inventory || false,
+                        companyId
+                    ]
+                );
+                return success({ message: 'Settings saved' });
+            } catch (updateErr) {
+                return error('Failed to save settings. Please run the database migration first.', 500);
+            }
         }
 
         return error('Not found', 404);
