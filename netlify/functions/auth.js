@@ -36,34 +36,52 @@ exports.handler = async (event, context) => {
 
         // GET /auth/setup-demo - Setup demo environment with proper hash (TEMPORARY)
         if (method === 'GET' && path === '/setup-demo') {
-            const newHash = await hashPassword('admin123');
-            
-            // Check if demo company exists
-            const companyCheck = await query(`SELECT id FROM companies WHERE subdomain = 'demo'`);
-            
-            if (companyCheck.rows.length === 0) {
-                // Create demo company
-                await query(`
-                    INSERT INTO companies (id, name, subdomain, email, status, settings)
-                    VALUES ('de000000-0000-0000-0000-000000000001', 'Southeast Propane Distribution', 'demo', 'info@southeastpropane.com', 'active', '{}')
-                    ON CONFLICT (subdomain) DO NOTHING
-                `);
+            try {
+                const newHash = await hashPassword('admin123');
+                
+                // Check if demo company exists
+                const companyCheck = await query(`SELECT id FROM companies WHERE subdomain = 'demo'`);
+                
+                let companyCreated = false;
+                if (companyCheck.rows.length === 0) {
+                    // Create demo company
+                    await query(`
+                        INSERT INTO companies (id, name, subdomain, email, status, settings)
+                        VALUES ('de000000-0000-0000-0000-000000000001', 'Southeast Propane Distribution', 'demo', 'info@southeastpropane.com', 'active', '{}')
+                        ON CONFLICT (subdomain) DO UPDATE SET name = 'Southeast Propane Distribution'
+                    `);
+                    companyCreated = true;
+                }
+                
+                // Check if demo user exists
+                const userCheck = await query(`SELECT id FROM users WHERE company_id = 'de000000-0000-0000-0000-000000000001' AND username = 'demo'`);
+                
+                let userCreated = false;
+                if (userCheck.rows.length === 0) {
+                    // Create demo user
+                    await query(`
+                        INSERT INTO users (company_id, username, email, password_hash, name, role, status)
+                        VALUES ('de000000-0000-0000-0000-000000000001', 'demo', 'demo@southeastpropane.com', $1, 'Demo Administrator', 'admin', 'active')
+                    `, [newHash]);
+                    userCreated = true;
+                } else {
+                    // Update existing user's password
+                    await query(`
+                        UPDATE users SET password_hash = $1 
+                        WHERE company_id = 'de000000-0000-0000-0000-000000000001' AND username = 'demo'
+                    `, [newHash]);
+                }
+                
+                return success({ 
+                    message: 'Demo environment ready! Login at /demo with username: demo, password: admin123',
+                    companyCreated,
+                    userCreated: userCreated,
+                    userUpdated: !userCreated
+                });
+            } catch (setupErr) {
+                console.error('Demo setup error:', setupErr);
+                return error('Failed to setup demo: ' + setupErr.message, 500);
             }
-            
-            // Delete and recreate demo user
-            await query(`DELETE FROM users WHERE company_id = 'de000000-0000-0000-0000-000000000001' AND username = 'demo'`);
-            
-            const result = await query(`
-                INSERT INTO users (company_id, username, email, password_hash, name, role, status)
-                VALUES ('de000000-0000-0000-0000-000000000001', 'demo', 'demo@southeastpropane.com', $1, 'Demo Administrator', 'admin', 'active')
-                RETURNING username, email
-            `, [newHash]);
-            
-            return success({ 
-                message: 'Demo user created! Login at /demo with admin123',
-                user: result.rows[0],
-                hashCreated: newHash.substring(0, 20) + '...'
-            });
         }
 
         return error('Not found', 404);

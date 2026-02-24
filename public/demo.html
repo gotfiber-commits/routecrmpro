@@ -181,10 +181,19 @@
             const errorDiv = document.getElementById('error');
             
             btn.disabled = true;
-            btnText.innerHTML = '<div class="spinner"></div> Logging in...';
+            btnText.innerHTML = '<div class="spinner"></div> Setting up demo...';
             errorDiv.style.display = 'none';
             
             try {
+                // First, ensure demo user exists by calling setup endpoint
+                try {
+                    await fetch('/.netlify/functions/auth/setup-demo');
+                } catch (setupErr) {
+                    console.log('Setup check:', setupErr.message);
+                }
+                
+                btnText.innerHTML = '<div class="spinner"></div> Logging in...';
+                
                 // Login with demo credentials
                 const response = await fetch('/.netlify/functions/auth/login?tenant=demo', {
                     method: 'POST',

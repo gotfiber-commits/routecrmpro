@@ -2344,7 +2344,23 @@
             const mapRef = useRef(null);
             const mapInstance = useRef(null);
             const markersRef = useRef([]);
-            const routeLineRef = useRef(null);
+            const routeLinesRef = useRef([]); // Array of polylines for each route
+
+            // Route colors for multi-route display
+            const routeColors = [
+                '#10B981', // Green
+                '#3B82F6', // Blue
+                '#F59E0B', // Amber
+                '#EF4444', // Red
+                '#8B5CF6', // Purple
+                '#EC4899', // Pink
+                '#14B8A6', // Teal
+                '#F97316', // Orange
+                '#6366F1', // Indigo
+                '#84CC16', // Lime
+                '#06B6D4', // Cyan
+                '#A855F7', // Violet
+            ];
 
             const dcs = data?.distributionCenters || [];
             const customers = data?.customers || [];
@@ -2384,10 +2400,8 @@
                 // Clear existing markers
                 markersRef.current.forEach(m => m.setMap(null));
                 markersRef.current = [];
-                if (routeLineRef.current) {
-                    routeLineRef.current.setMap(null);
-                    routeLineRef.current = null;
-                }
+                routeLinesRef.current.forEach(line => line.setMap(null));
+                routeLinesRef.current = [];
 
                 const bounds = new google.maps.LatLngBounds();
                 const dc = dcs.find(d => d.id === selectedDC);
@@ -2465,10 +2479,57 @@
                 try {
                     const dc = dcs.find(d => d.id === selectedDC);
                     
-                    // Split customers into chunks based on max stops per route
+                    // ============================================
+                    // GEOGRAPHIC CLUSTERING - Group nearby customers
+                    // ============================================
+                    
+                    // Step 1: Calculate bearing (direction) from DC to each customer
+                    // This creates "pie slices" radiating from the DC
+                    const dcLat = parseFloat(dc.lat);
+                    const dcLng = parseFloat(dc.lng);
+                    
+                    const customersWithBearing = customersToRoute.map(c => {
+                        const custLat = parseFloat(c.lat);
+                        const custLng = parseFloat(c.lng);
+                        
+                        // Calculate bearing from DC to customer (0-360 degrees)
+                        const dLng = (custLng - dcLng) * Math.PI / 180;
+                        const lat1 = dcLat * Math.PI / 180;
+                        const lat2 = custLat * Math.PI / 180;
+                        const y = Math.sin(dLng) * Math.cos(lat2);
+                        const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+                        let bearing = Math.atan2(y, x) * 180 / Math.PI;
+                        bearing = (bearing + 360) % 360; // Normalize to 0-360
+                        
+                        // Calculate distance from DC
+                        const R = 3959; // Earth radius in miles
+                        const dLat = (custLat - dcLat) * Math.PI / 180;
+                        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                                  Math.cos(lat1) * Math.cos(lat2) * 
+                                  Math.sin(dLng/2) * Math.sin(dLng/2);
+                        const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                        
+                        return { ...c, bearing, distance };
+                    });
+                    
+                    // Step 2: Sort by bearing (clockwise from north)
+                    // This groups customers by direction from the DC
+                    customersWithBearing.sort((a, b) => a.bearing - b.bearing);
+                    
+                    // Step 3: Split into geographic chunks
+                    // Customers are now sorted by direction, so sequential chunks = geographic areas
+                    const numRoutes = Math.ceil(customersWithBearing.length / maxStopsPerRoute);
                     const customerChunks = [];
-                    for (let i = 0; i < customersToRoute.length; i += maxStopsPerRoute) {
-                        customerChunks.push(customersToRoute.slice(i, i + maxStopsPerRoute));
+                    
+                    if (numRoutes === 1) {
+                        // Single route - just use all customers
+                        customerChunks.push(customersWithBearing);
+                    } else {
+                        // Multiple routes - divide the "pie" evenly
+                        const stopsPerRoute = Math.ceil(customersWithBearing.length / numRoutes);
+                        for (let i = 0; i < customersWithBearing.length; i += stopsPerRoute) {
+                            customerChunks.push(customersWithBearing.slice(i, i + stopsPerRoute));
+                        }
                     }
 
                     const routes = [];
@@ -2476,7 +2537,7 @@
                     for (let i = 0; i < customerChunks.length; i++) {
                         const chunk = customerChunks[i];
                         
-                        // Optimize this chunk
+                        // Optimize this geographic chunk
                         const result = await api.request('/routes-v2/optimize', {
                             method: 'POST',
                             body: JSON.stringify({
@@ -2499,10 +2560,10 @@
 
                     setGeneratedRoutes(routes);
                     
-                    // Auto-select first route to show on map
+                    // Show all routes on map
                     if (routes.length > 0) {
                         setSelectedRoute(0);
-                        showRouteOnMap(routes[0]);
+                        showAllRoutesOnMap(routes, 0); // Highlight first route
                     }
 
                 } catch (err) {
@@ -2619,26 +2680,26 @@
             };
 
             // Show route on map
-            const showRouteOnMap = (route) => {
+            // Show ALL routes on the map with different colors
+            const showAllRoutesOnMap = (routes, highlightIndex = null) => {
                 if (!mapInstance.current) return;
                 const map = mapInstance.current;
 
-                // Clear existing markers and route
+                // Clear existing markers and routes
                 markersRef.current.forEach(m => m.setMap(null));
                 markersRef.current = [];
-                if (routeLineRef.current) {
-                    routeLineRef.current.setMap(null);
-                    routeLineRef.current = null;
-                }
+                routeLinesRef.current.forEach(line => line.setMap(null));
+                routeLinesRef.current = [];
 
                 const bounds = new google.maps.LatLngBounds();
+                const dc = routes[0]?.dc;
 
-                // DC marker
-                if (route.dc?.lat && route.dc?.lng) {
+                // DC marker (only once)
+                if (dc?.lat && dc?.lng) {
                     const dcMarker = new google.maps.Marker({
-                        position: { lat: parseFloat(route.dc.lat), lng: parseFloat(route.dc.lng) },
+                        position: { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) },
                         map,
-                        title: route.dc.name + ' (Start/End)',
+                        title: dc.name + ' (Start/End)',
                         icon: {
                             url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="#6366F1"><path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/></svg>'),
                             scaledSize: new google.maps.Size(40, 40)
@@ -2649,69 +2710,87 @@
                     bounds.extend(dcMarker.getPosition());
                 }
 
-                // Stop markers (numbered)
-                const pathCoords = [];
-                if (route.dc?.lat && route.dc?.lng) {
-                    pathCoords.push({ lat: parseFloat(route.dc.lat), lng: parseFloat(route.dc.lng) });
-                }
+                // Draw each route with its own color
+                routes.forEach((route, routeIdx) => {
+                    const color = routeColors[routeIdx % routeColors.length];
+                    const isHighlighted = highlightIndex === routeIdx;
+                    const pathCoords = [];
 
-                route.stops.forEach((stop, idx) => {
-                    const pos = { lat: parseFloat(stop.lat), lng: parseFloat(stop.lng) };
-                    pathCoords.push(pos);
+                    // Start from DC
+                    if (dc?.lat && dc?.lng) {
+                        pathCoords.push({ lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) });
+                    }
 
-                    const marker = new google.maps.Marker({
-                        position: pos,
-                        map,
-                        title: `Stop ${stop.stop_number}: ${stop.customer_name}`,
-                        label: {
-                            text: String(stop.stop_number),
-                            color: 'white',
-                            fontWeight: 'bold',
-                            fontSize: '12px'
-                        },
-                        icon: {
-                            path: google.maps.SymbolPath.CIRCLE,
-                            scale: 16,
-                            fillColor: '#10B981',
-                            fillOpacity: 1,
-                            strokeColor: 'white',
-                            strokeWeight: 2
+                    // Add stop markers for this route
+                    route.stops.forEach((stop, stopIdx) => {
+                        const pos = { lat: parseFloat(stop.lat), lng: parseFloat(stop.lng) };
+                        pathCoords.push(pos);
+
+                        // Only show numbered markers for highlighted route, or small dots for others
+                        const marker = new google.maps.Marker({
+                            position: pos,
+                            map,
+                            title: `Route ${routeIdx + 1}, Stop ${stop.stop_number}: ${stop.customer_name}`,
+                            label: isHighlighted ? {
+                                text: String(stop.stop_number),
+                                color: 'white',
+                                fontWeight: 'bold',
+                                fontSize: '11px'
+                            } : null,
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: isHighlighted ? 14 : 6,
+                                fillColor: color,
+                                fillOpacity: isHighlighted ? 1 : 0.7,
+                                strokeColor: 'white',
+                                strokeWeight: isHighlighted ? 2 : 1
+                            },
+                            zIndex: isHighlighted ? 100 : 10
+                        });
+
+                        if (isHighlighted) {
+                            const infoContent = `
+                                <div style="color:#333;min-width:200px">
+                                    <strong>Stop #${stop.stop_number}: ${stop.customer_name}</strong><br/>
+                                    ${stop.address || ''}<br/>
+                                    ${stop.city}, ${stop.state}<br/>
+                                    <hr style="margin:8px 0"/>
+                                    Tank: ${stop.tank_size || '?'} gal @ ${stop.current_level || '?'}%<br/>
+                                    Distance: ${stop.distance_from_previous} mi
+                                </div>
+                            `;
+                            const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+                            marker.addListener('click', () => infoWindow.open(map, marker));
                         }
+
+                        markersRef.current.push(marker);
+                        bounds.extend(pos);
                     });
 
-                    const infoContent = `
-                        <div style="color:#333;min-width:200px">
-                            <strong>Stop #${stop.stop_number}: ${stop.customer_name}</strong><br/>
-                            ${stop.address || ''}<br/>
-                            ${stop.city}, ${stop.state}<br/>
-                            <hr style="margin:8px 0"/>
-                            Tank: ${stop.tank_size || '?'} gal @ ${stop.current_level || '?'}%<br/>
-                            Distance: ${stop.distance_from_previous} mi (${stop.time_from_previous_minutes} min)
-                        </div>
-                    `;
-                    const infoWindow = new google.maps.InfoWindow({ content: infoContent });
-                    marker.addListener('click', () => infoWindow.open(map, marker));
+                    // Return to DC
+                    if (dc?.lat && dc?.lng) {
+                        pathCoords.push({ lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) });
+                    }
 
-                    markersRef.current.push(marker);
-                    bounds.extend(pos);
-                });
-
-                // Return to DC
-                if (route.dc?.lat && route.dc?.lng) {
-                    pathCoords.push({ lat: parseFloat(route.dc.lat), lng: parseFloat(route.dc.lng) });
-                }
-
-                // Draw route line
-                routeLineRef.current = new google.maps.Polyline({
-                    path: pathCoords,
-                    geodesic: true,
-                    strokeColor: '#6366F1',
-                    strokeOpacity: 0.8,
-                    strokeWeight: 4,
-                    map
+                    // Draw route polyline
+                    const polyline = new google.maps.Polyline({
+                        path: pathCoords,
+                        geodesic: true,
+                        strokeColor: color,
+                        strokeOpacity: isHighlighted ? 1 : 0.6,
+                        strokeWeight: isHighlighted ? 5 : 3,
+                        map,
+                        zIndex: isHighlighted ? 100 : 10
+                    });
+                    routeLinesRef.current.push(polyline);
                 });
 
                 map.fitBounds(bounds);
+            };
+
+            // Legacy function for single route display (kept for compatibility)
+            const showRouteOnMap = (route) => {
+                showAllRoutesOnMap([route], 0);
             };
 
             // Print route for driver
@@ -2908,10 +2987,10 @@
 
             // Update map when selected route changes
             useEffect(() => {
-                if (selectedRoute !== null && generatedRoutes[selectedRoute]) {
-                    showRouteOnMap(generatedRoutes[selectedRoute]);
+                if (generatedRoutes.length > 0) {
+                    showAllRoutesOnMap(generatedRoutes, selectedRoute);
                 }
-            }, [selectedRoute]);
+            }, [selectedRoute, generatedRoutes.length]);
 
             const totalStats = generatedRoutes.reduce((acc, r) => ({
                 stops: acc.stops + r.summary.total_stops,
@@ -3042,7 +3121,8 @@
                                                     background: selectedRoute === idx ? 'rgba(99,102,241,0.15)' : 'var(--bg-dark)',
                                                     borderRadius:'8px',
                                                     marginBottom:'0.5rem',
-                                                    border: selectedRoute === idx ? '2px solid var(--primary)' : '2px solid transparent'
+                                                    border: selectedRoute === idx ? '2px solid var(--primary)' : '2px solid transparent',
+                                                    borderLeft: `4px solid ${routeColors[idx % routeColors.length]}`
                                                 }}
                                             >
                                                 <div 
@@ -3050,7 +3130,10 @@
                                                     style={{cursor:'pointer'}}
                                                 >
                                                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                                                        <strong>Route #{route.route_number}</strong>
+                                                        <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                                                            <div style={{width:'12px',height:'12px',borderRadius:'50%',background:routeColors[idx % routeColors.length]}}></div>
+                                                            <strong>Route #{route.route_number}</strong>
+                                                        </div>
                                                         <div style={{display:'flex',gap:'0.5rem',alignItems:'center'}}>
                                                             {activatedRoutes.includes(idx) && (
                                                                 <span style={{fontSize:'0.7rem',padding:'0.2rem 0.5rem',borderRadius:'4px',background:'rgba(16,185,129,0.2)',color:'var(--success)'}}>
@@ -3181,7 +3264,7 @@
                                             <select className="form-input" value={activateDriverId} onChange={e => setActivateDriverId(e.target.value)}>
                                                 <option value="">-- Optional --</option>
                                                 {drivers.filter(d => d.status === 'active').map(d => (
-                                                    <option key={d.id} value={d.id}>{d.name} {d.hourly_rate ? `($${d.hourly_rate}/hr)` : ''}</option>
+                                                    <option key={d.id} value={d.id}>{d.name}</option>
                                                 ))}
                                             </select>
                                         </div>
@@ -3212,7 +3295,7 @@
                                                     <div>⛽ Fuel ({est.fuelGallons} gal @ {est.mpg} MPG):</div>
                                                     <div style={{textAlign:'right',fontWeight:'600'}}>${est.fuelCost}</div>
                                                     
-                                                    <div>👷 Driver ({est.hours} hrs {est.hourlyRate > 0 ? `@ $${est.hourlyRate}/hr` : ''}):</div>
+                                                    <div>👷 Driver ({est.hours} hrs):</div>
                                                     <div style={{textAlign:'right',fontWeight:'600'}}>${est.driverCost}</div>
                                                     
                                                     <div style={{borderTop:'1px solid var(--border)',paddingTop:'0.5rem',marginTop:'0.25rem'}}>📊 Total Estimated Cost:</div>
@@ -3246,9 +3329,11 @@
             const [loading, setLoading] = useState(true);
             const [selectedRun, setSelectedRun] = useState(null);
             const [error, setError] = useState('');
+            const [unroutedCustomers, setUnroutedCustomers] = useState([]);
 
             useEffect(() => {
                 loadRuns();
+                loadUnroutedCustomers();
             }, []);
 
             const loadRuns = async () => {
@@ -3260,6 +3345,15 @@
                     setError(err.message);
                 } finally {
                     setLoading(false);
+                }
+            };
+
+            const loadUnroutedCustomers = async () => {
+                try {
+                    const result = await api.request('/routes-v2/runs/unrouted-customers');
+                    setUnroutedCustomers(result);
+                } catch (err) {
+                    console.log('Could not load unrouted customers:', err.message);
                 }
             };
 
@@ -3282,6 +3376,28 @@
                     case 'completed': return 'var(--success)';
                     case 'cancelled': return 'var(--danger)';
                     default: return 'var(--text-secondary)';
+                }
+            };
+
+            // Duplicate a route for tomorrow (same stops, same order)
+            const handleDuplicateRoute = async (runId) => {
+                const tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                const tomorrowStr = tomorrow.toISOString().split('T')[0];
+                
+                if (!confirm(`Schedule this same route for tomorrow (${tomorrow.toLocaleDateString()})?`)) {
+                    return;
+                }
+                
+                try {
+                    const result = await api.request(`/routes-v2/runs/${runId}/duplicate`, {
+                        method: 'POST',
+                        body: JSON.stringify({ scheduled_date: tomorrowStr })
+                    });
+                    alert(`Route scheduled for tomorrow with ${result.stops_count} stops!`);
+                    loadRuns();
+                } catch (err) {
+                    alert('Error: ' + err.message);
                 }
             };
 
@@ -3385,6 +3501,33 @@
                 return <RouteRunDetail run={selectedRun} onBack={() => { setSelectedRun(null); loadRuns(); }} />;
             }
 
+            // Get today's and tomorrow's dates
+            const today = new Date().toISOString().split('T')[0];
+            const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+            
+            // Check if there are completed routes that could be scheduled for tomorrow
+            const completedRoutes = runs.filter(r => r.status === 'completed');
+            const tomorrowRoutes = runs.filter(r => r.scheduled_date === tomorrow);
+            const hasTomorrowScheduled = tomorrowRoutes.length > 0;
+
+            // Bulk schedule all completed routes for tomorrow
+            const handleScheduleAllTomorrow = async () => {
+                if (!confirm(`Schedule ${completedRoutes.length} route(s) for tomorrow?`)) return;
+                
+                try {
+                    for (const run of completedRoutes) {
+                        await api.request(`/routes-v2/runs/${run.id}/duplicate`, {
+                            method: 'POST',
+                            body: JSON.stringify({ scheduled_date: tomorrow })
+                        });
+                    }
+                    alert(`${completedRoutes.length} route(s) scheduled for tomorrow!`);
+                    loadRuns();
+                } catch (err) {
+                    alert('Error: ' + err.message);
+                }
+            };
+
             return (
                 <>
                     <div className="page-header">
@@ -3392,8 +3535,42 @@
                             <h1>🚀 Active Routes</h1>
                             <p className="text-muted">Today's routes and route history</p>
                         </div>
-                        <button className="btn btn-secondary" onClick={loadRuns}>↻ Refresh</button>
+                        <div style={{display:'flex',gap:'0.5rem'}}>
+                            {completedRoutes.length > 0 && !hasTomorrowScheduled && (
+                                <button className="btn btn-success" onClick={handleScheduleAllTomorrow}>
+                                    🔄 Schedule All for Tomorrow ({completedRoutes.length})
+                                </button>
+                            )}
+                            <button className="btn btn-secondary" onClick={loadRuns}>↻ Refresh</button>
+                        </div>
                     </div>
+
+                    {/* Tomorrow's routes info */}
+                    {hasTomorrowScheduled && (
+                        <div style={{background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.3)',borderRadius:'8px',padding:'1rem',marginBottom:'1rem'}}>
+                            <strong style={{color:'var(--success)'}}>✅ Tomorrow Ready:</strong> {tomorrowRoutes.length} route(s) scheduled for {new Date(tomorrow).toLocaleDateString('en-US', {weekday:'long', month:'short', day:'numeric'})}
+                        </div>
+                    )}
+
+                    {/* Unrouted customers warning */}
+                    {unroutedCustomers.length > 0 && (
+                        <div style={{background:'rgba(245,158,11,0.1)',border:'1px solid rgba(245,158,11,0.3)',borderRadius:'8px',padding:'1rem',marginBottom:'1rem'}}>
+                            <strong style={{color:'var(--warning)'}}>⚠️ New Customers Need Routes:</strong>
+                            <div style={{marginTop:'0.5rem',fontSize:'0.9rem'}}>
+                                {unroutedCustomers.map(dc => (
+                                    <div key={dc.dc_id} style={{marginBottom:'0.25rem'}}>
+                                        <strong>{dc.dc_name}:</strong> {dc.customers.length} customer(s) not on any route
+                                        <span style={{color:'var(--text-muted)',marginLeft:'0.5rem'}}>
+                                            ({dc.customers.slice(0,3).map(c => c.name).join(', ')}{dc.customers.length > 3 ? '...' : ''})
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div style={{marginTop:'0.5rem',fontSize:'0.85rem',color:'var(--text-muted)'}}>
+                                Go to <strong>Generate Routes</strong> to re-optimize and include new customers.
+                            </div>
+                        </div>
+                    )}
 
                     {error && <div className="error-message">{error}</div>}
 
@@ -3446,7 +3623,7 @@
                                             </td>
                                             <td><span style={{color: getStatusColor(run.status),fontWeight:'600'}}>{run.status.replace('_', ' ')}</span></td>
                                             <td>
-                                                <div style={{display:'flex',gap:'0.5rem'}}>
+                                                <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
                                                     <button className="btn btn-primary btn-sm" onClick={() => setSelectedRun(run)}>View</button>
                                                     <button className="btn btn-secondary btn-sm" onClick={() => handleQuickPrint(run)} title="Print route sheet">🖨️</button>
                                                     {run.status === 'scheduled' && (
@@ -3454,6 +3631,9 @@
                                                     )}
                                                     {run.status === 'in_progress' && (
                                                         <button className="btn btn-warning btn-sm" onClick={() => handleStatusChange(run.id, 'completed')}>Complete</button>
+                                                    )}
+                                                    {run.status === 'completed' && (
+                                                        <button className="btn btn-success btn-sm" onClick={() => handleDuplicateRoute(run.id)} title="Schedule same route for tomorrow">🔄 Tomorrow</button>
                                                     )}
                                                 </div>
                                             </td>
@@ -8542,18 +8722,26 @@
 
         // Complete Stop Modal (shared) - Supports both gallons and products
         function CompleteStopModal({ stop, deliverySettings, products, onComplete, onSkip, onClose, onNavigate, onCall }) {
-            const [mode, setMode] = useState(deliverySettings?.deliveryModel || 'gallons');
+            // Determine effective mode - fall back to gallons if products mode but no products defined
+            const configuredMode = deliverySettings?.deliveryModel || 'gallons';
+            const hasProducts = products && products.length > 0;
+            const effectiveMode = (configuredMode === 'products' || configuredMode === 'mixed') && !hasProducts ? 'gallons' : configuredMode;
+            
+            const [mode, setMode] = useState(effectiveMode);
             const [gallons, setGallons] = useState('');
             const [tankAfter, setTankAfter] = useState('');
             const [notes, setNotes] = useState('');
             const [loading, setLoading] = useState(false);
             const [showSkip, setShowSkip] = useState(false);
             const [skipReason, setSkipReason] = useState('');
+            const [showNoProductsWarning, setShowNoProductsWarning] = useState(
+                (configuredMode === 'products' || configuredMode === 'mixed') && !hasProducts
+            );
             
             // Product quantities: { productId: { delivered: 0, collected: 0 } }
             const [productQtys, setProductQtys] = useState({});
 
-            const isProductMode = mode === 'products' || mode === 'mixed';
+            const isProductMode = (mode === 'products' || mode === 'mixed') && hasProducts;
             const trackEmpties = deliverySettings?.trackEmpties || false;
             const estimatedGallons = Math.round(stop.tank_size_gallons * (1 - (stop.tank_level_before || 50) / 100));
 
@@ -8724,6 +8912,14 @@
                                             <div className="quick-action-label">Call</div>
                                         </button>
                                     </div>
+
+                                    {/* Warning if products mode but no products defined */}
+                                    {showNoProductsWarning && (
+                                        <div style={{background:'rgba(245,158,11,0.15)',border:'1px solid rgba(245,158,11,0.3)',borderRadius:'12px',padding:'0.75rem',marginBottom:'1rem'}}>
+                                            <div style={{color:'var(--warning)',fontWeight:'600',marginBottom:'0.25rem'}}>⚠️ Products Not Set Up</div>
+                                            <div style={{fontSize:'0.85rem',color:'var(--text-secondary)'}}>Your company is configured for product delivery, but no products have been added yet. Using gallons mode for now.</div>
+                                        </div>
+                                    )}
 
                                     <div className="info-grid">
                                         <div className="info-item full">

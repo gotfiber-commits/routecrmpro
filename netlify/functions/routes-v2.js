@@ -520,6 +520,52 @@ async function handleTemplates(method, path, companyId, user, event) {
 // =====================================================
 
 async function handleRuns(method, path, companyId, user, event) {
+    // GET /runs/unrouted-customers - Get customers at each DC that aren't on any scheduled route
+    if (method === 'GET' && path === '/unrouted-customers') {
+        // Get all active customers with their DC
+        const customers = await query(
+            `SELECT c.id, c.code, c.name, c.preferred_dc_id, dc.name as dc_name
+             FROM customers c
+             LEFT JOIN distribution_centers dc ON c.preferred_dc_id = dc.id
+             WHERE c.company_id = $1 AND c.status = 'active' AND c.lat IS NOT NULL`,
+            [companyId]
+        );
+
+        // Get all customers on scheduled/in_progress routes (today and future)
+        const routedCustomers = await query(
+            `SELECT DISTINCT rrs.customer_id
+             FROM route_run_stops rrs
+             JOIN route_runs rr ON rrs.run_id = rr.id
+             WHERE rr.company_id = $1 AND rr.status IN ('scheduled', 'in_progress')
+             AND rr.scheduled_date >= CURRENT_DATE`,
+            [companyId]
+        );
+
+        const routedIds = new Set(routedCustomers.rows.map(r => r.customer_id));
+        
+        // Group unrouted customers by DC
+        const unroutedByDC = {};
+        for (const c of customers.rows) {
+            if (!routedIds.has(c.id)) {
+                const dcId = c.preferred_dc_id || 'unassigned';
+                if (!unroutedByDC[dcId]) {
+                    unroutedByDC[dcId] = {
+                        dc_id: dcId,
+                        dc_name: c.dc_name || 'Unassigned',
+                        customers: []
+                    };
+                }
+                unroutedByDC[dcId].customers.push({
+                    id: c.id,
+                    code: c.code,
+                    name: c.name
+                });
+            }
+        }
+
+        return success(Object.values(unroutedByDC).filter(dc => dc.customers.length > 0));
+    }
+
     // GET /runs - List runs (with filters)
     if (method === 'GET' && path === '') {
         const params = event.queryStringParameters || {};
@@ -1000,6 +1046,89 @@ async function handleRuns(method, path, companyId, user, event) {
         await updateRunStats(runId);
 
         return success(result.rows[0]);
+    }
+
+    // POST /runs/:id/duplicate - Duplicate a route run for a new date (repeat tomorrow)
+    if (method === 'POST' && path.match(/^\/[a-f0-9-]+\/duplicate$/)) {
+        if (!requireRole(user, ['admin', 'dispatch'])) {
+            return error('Access denied', 403);
+        }
+        
+        const runId = path.split('/')[1];
+        const body = parseBody(event);
+        const targetDate = body.scheduled_date || new Date(Date.now() + 86400000).toISOString().split('T')[0]; // Default to tomorrow
+
+        // Get the original run
+        const originalRun = await query(
+            `SELECT * FROM route_runs WHERE id = $1 AND company_id = $2`,
+            [runId, companyId]
+        );
+        if (originalRun.rows.length === 0) {
+            return error('Route run not found', 404);
+        }
+
+        const run = originalRun.rows[0];
+
+        // Get the original stops (in order)
+        const originalStops = await query(
+            `SELECT customer_id, stop_number, delivery_instructions 
+             FROM route_run_stops WHERE run_id = $1 ORDER BY stop_number`,
+            [runId]
+        );
+
+        // Create new run
+        const newRun = await query(
+            `INSERT INTO route_runs (
+                company_id, dc_id, name, scheduled_date, status,
+                driver_id, truck_id, estimated_miles, estimated_duration_minutes
+            ) VALUES ($1, $2, $3, $4, 'scheduled', $5, $6, $7, $8)
+            RETURNING *`,
+            [
+                companyId,
+                run.dc_id,
+                run.name, // Keep same name
+                targetDate,
+                body.driver_id || run.driver_id,
+                body.truck_id || run.truck_id,
+                run.estimated_miles,
+                run.estimated_duration_minutes
+            ]
+        );
+
+        const newRunId = newRun.rows[0].id;
+
+        // Copy stops with fresh tank levels from customers
+        for (const stop of originalStops.rows) {
+            // Get current tank info for customer
+            const customer = await query(
+                `SELECT tank_size, current_level, price_per_gallon FROM customers WHERE id = $1`,
+                [stop.customer_id]
+            );
+            const cust = customer.rows[0] || {};
+
+            await query(
+                `INSERT INTO route_run_stops (
+                    run_id, customer_id, stop_number, status,
+                    tank_size_gallons, tank_level_before, price_per_gallon, delivery_instructions
+                ) VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)`,
+                [
+                    newRunId,
+                    stop.customer_id,
+                    stop.stop_number,
+                    cust.tank_size || 500,
+                    cust.current_level || 50,
+                    cust.price_per_gallon || 0,
+                    stop.delivery_instructions
+                ]
+            );
+        }
+
+        return success({
+            message: 'Route duplicated successfully',
+            new_run_id: newRunId,
+            scheduled_date: targetDate,
+            stops_count: originalStops.rows.length
+        });
     }
 
     // POST /runs/:id/stops/:stopId/complete-products - Complete stop with product delivery
