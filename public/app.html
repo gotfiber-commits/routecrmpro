@@ -119,12 +119,31 @@
         .text-danger { color: var(--danger); }
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
         
+        /* Route Builder Layout */
+        .route-builder-grid { display: grid; grid-template-columns: 350px 1fr; gap: 1rem; height: calc(100vh - 220px); }
+        
+        /* Mobile Navigation */
+        .mobile-header { display: none; position: fixed; top: 0; left: 0; right: 0; height: 56px; background: var(--bg-card); border-bottom: 1px solid var(--border); z-index: 200; padding: 0 1rem; align-items: center; justify-content: space-between; }
+        .mobile-header h1 { font-size: 1.1rem; display: flex; align-items: center; gap: 0.5rem; }
+        .hamburger-btn { width: 44px; height: 44px; border: none; background: transparent; color: var(--text-primary); font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; border-radius: 8px; }
+        .hamburger-btn:active { background: var(--bg-input); }
+        .mobile-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 150; }
+        .sidebar-close { display: none; }
+        
         @media (max-width: 768px) {
-            .sidebar { width: 100%; position: relative; height: auto; }
-            .main-content { margin-left: 0; }
+            .mobile-header { display: flex; }
+            .sidebar { position: fixed; left: -280px; width: 280px; height: 100vh; transition: left 0.3s ease; z-index: 200; }
+            .sidebar.open { left: 0; }
+            .sidebar-close { display: block; position: absolute; top: 1rem; right: 1rem; width: 36px; height: 36px; border: none; background: var(--bg-input); color: var(--text-primary); font-size: 1.25rem; border-radius: 8px; cursor: pointer; }
+            .mobile-overlay.open { display: block; }
+            .main-content { margin-left: 0; padding-top: 56px; }
             .form-row, .form-row-3, .grid-2 { grid-template-columns: 1fr; }
             .stats-grid { grid-template-columns: 1fr 1fr; }
             .table-container { overflow-x: auto; }
+            .page-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
+            .page-header .btn { width: 100%; }
+            .route-builder-grid { grid-template-columns: 1fr; height: auto; }
+            .route-builder-grid .map-panel { height: 350px; order: -1; }
         }
     </style>
 </head>
@@ -607,6 +626,7 @@
             const [activeView, setActiveView] = useState('dashboard');
             const [data, setData] = useState(null);
             const [loading, setLoading] = useState(true);
+            const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
             useEffect(() => { loadData(); }, []);
 
@@ -620,6 +640,11 @@
                 } finally {
                     setLoading(false);
                 }
+            };
+
+            const handleNavClick = (viewId) => {
+                setActiveView(viewId);
+                setMobileMenuOpen(false); // Close mobile menu on navigation
             };
 
             const navItems = [
@@ -644,9 +669,23 @@
                 );
             }
 
+            const currentNavItem = navItems.find(item => item.id === activeView);
+
             return (
                 <div className="dashboard">
-                    <div className="sidebar">
+                    {/* Mobile Header */}
+                    <div className="mobile-header">
+                        <button className="hamburger-btn" onClick={() => setMobileMenuOpen(true)}>☰</button>
+                        <h1>{currentNavItem?.icon} {currentNavItem?.label || 'Dashboard'}</h1>
+                        <div style={{width:'44px'}}></div>
+                    </div>
+
+                    {/* Mobile Overlay */}
+                    <div className={`mobile-overlay ${mobileMenuOpen ? 'open' : ''}`} onClick={() => setMobileMenuOpen(false)}></div>
+
+                    {/* Sidebar */}
+                    <div className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
+                        <button className="sidebar-close" onClick={() => setMobileMenuOpen(false)}>✕</button>
                         <div className="sidebar-header">
                             <div className="sidebar-logo">
                                 <div className="sidebar-logo-icon">🚛</div>
@@ -655,7 +694,7 @@
                         </div>
                         <nav className="sidebar-nav">
                             {navItems.map(item => (
-                                <div key={item.id} className={`nav-item ${activeView === item.id ? 'active' : ''}`} onClick={() => setActiveView(item.id)}>
+                                <div key={item.id} className={`nav-item ${activeView === item.id ? 'active' : ''}`} onClick={() => handleNavClick(item.id)}>
                                     <span style={{ fontSize: '1.1rem' }}>{item.icon}</span>
                                     <span>{item.label}</span>
                                 </div>
@@ -2913,7 +2952,7 @@
                         </div>
                     )}
 
-                    <div style={{display:'grid',gridTemplateColumns:'350px 1fr',gap:'1rem',height:'calc(100vh - 220px)'}}>
+                    <div className="route-builder-grid">
                         {/* Left Panel - Controls & Routes */}
                         <div style={{display:'flex',flexDirection:'column',gap:'1rem',overflow:'auto'}}>
                             {/* DC Selection */}
@@ -3103,8 +3142,8 @@
                         </div>
 
                         {/* Right Panel - Map */}
-                        <div className="card" style={{overflow:'hidden'}}>
-                            <div ref={mapRef} style={{width:'100%',height:'100%',minHeight:'500px'}}></div>
+                        <div className="card map-panel" style={{overflow:'hidden'}}>
+                            <div ref={mapRef} style={{width:'100%',height:'100%',minHeight:'400px'}}></div>
                         </div>
                     </div>
 
