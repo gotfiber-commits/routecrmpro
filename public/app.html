@@ -2345,6 +2345,7 @@
             const mapInstance = useRef(null);
             const markersRef = useRef([]);
             const routeLinesRef = useRef([]); // Array of polylines for each route
+            const directionsRenderersRef = useRef([]); // Array of DirectionsRenderers for road paths
 
             // Route colors for multi-route display
             const routeColors = [
@@ -2547,6 +2548,13 @@
                             })
                         });
 
+                        console.log('Optimize API result:', {
+                            method: result.optimization_method,
+                            hasPolyline: !!result.polyline,
+                            polylinePreview: result.polyline ? result.polyline.substring(0, 50) + '...' : 'NONE',
+                            stops: result.stops?.length
+                        });
+
                         routes.push({
                             route_number: i + 1,
                             dc: dc,
@@ -2690,6 +2698,8 @@
                 markersRef.current = [];
                 routeLinesRef.current.forEach(line => line.setMap(null));
                 routeLinesRef.current = [];
+                directionsRenderersRef.current.forEach(r => r.setMap(null));
+                directionsRenderersRef.current = [];
 
                 const bounds = new google.maps.LatLngBounds();
                 const dc = routes[0]?.dc;
@@ -2710,21 +2720,17 @@
                     bounds.extend(dcMarker.getPosition());
                 }
 
+                // Draw each route with its own color using DirectionsService
+                const directionsService = new google.maps.DirectionsService();
+
                 // Draw each route with its own color
                 routes.forEach((route, routeIdx) => {
                     const color = routeColors[routeIdx % routeColors.length];
                     const isHighlighted = highlightIndex === routeIdx;
-                    const pathCoords = [];
-
-                    // Start from DC
-                    if (dc?.lat && dc?.lng) {
-                        pathCoords.push({ lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) });
-                    }
 
                     // Add stop markers for this route
                     route.stops.forEach((stop, stopIdx) => {
                         const pos = { lat: parseFloat(stop.lat), lng: parseFloat(stop.lng) };
-                        pathCoords.push(pos);
 
                         // Only show numbered markers for highlighted route, or small dots for others
                         const marker = new google.maps.Marker({
@@ -2767,22 +2773,60 @@
                         bounds.extend(pos);
                     });
 
-                    // Return to DC
-                    if (dc?.lat && dc?.lng) {
-                        pathCoords.push({ lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) });
+                    // Use DirectionsService to draw actual road route
+                    if (dc?.lat && dc?.lng && route.stops.length > 0) {
+                        const dcPos = { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) };
+                        
+                        // Build waypoints from all stops
+                        const waypoints = route.stops.map(stop => ({
+                            location: { lat: parseFloat(stop.lat), lng: parseFloat(stop.lng) },
+                            stopover: true
+                        }));
+                        
+                        // Request: DC -> all stops -> DC (round trip)
+                        const request = {
+                            origin: dcPos,
+                            destination: dcPos, // Return to DC
+                            waypoints: waypoints,
+                            travelMode: google.maps.TravelMode.DRIVING,
+                            optimizeWaypoints: false // Keep our optimized order
+                        };
+                        
+                        console.log(`Route ${routeIdx + 1}: Requesting directions for ${waypoints.length} waypoints`);
+                        
+                        directionsService.route(request, (result, status) => {
+                            console.log(`Route ${routeIdx + 1}: DirectionsService status = ${status}`);
+                            
+                            if (status === google.maps.DirectionsStatus.OK) {
+                                console.log(`Route ${routeIdx + 1}: Drawing road path`);
+                                const renderer = new google.maps.DirectionsRenderer({
+                                    map: map,
+                                    directions: result,
+                                    suppressMarkers: true, // We draw our own markers
+                                    polylineOptions: {
+                                        strokeColor: color,
+                                        strokeOpacity: isHighlighted ? 1 : 0.6,
+                                        strokeWeight: isHighlighted ? 5 : 3,
+                                        zIndex: isHighlighted ? 100 : 10
+                                    }
+                                });
+                                directionsRenderersRef.current.push(renderer);
+                            } else {
+                                console.error(`Route ${routeIdx + 1}: DirectionsService failed with status: ${status}`);
+                                // Fallback to straight lines
+                                const pathCoords = [dcPos, ...route.stops.map(s => ({ lat: parseFloat(s.lat), lng: parseFloat(s.lng) })), dcPos];
+                                const polyline = new google.maps.Polyline({
+                                    path: pathCoords,
+                                    strokeColor: color,
+                                    strokeOpacity: isHighlighted ? 1 : 0.6,
+                                    strokeWeight: isHighlighted ? 5 : 3,
+                                    map,
+                                    zIndex: isHighlighted ? 100 : 10
+                                });
+                                routeLinesRef.current.push(polyline);
+                            }
+                        });
                     }
-
-                    // Draw route polyline
-                    const polyline = new google.maps.Polyline({
-                        path: pathCoords,
-                        geodesic: true,
-                        strokeColor: color,
-                        strokeOpacity: isHighlighted ? 1 : 0.6,
-                        strokeWeight: isHighlighted ? 5 : 3,
-                        map,
-                        zIndex: isHighlighted ? 100 : 10
-                    });
-                    routeLinesRef.current.push(polyline);
                 });
 
                 map.fitBounds(bounds);
