@@ -1705,15 +1705,15 @@ async function optimizeStops(companyId, event) {
             const waypointStr = customers.map(c => `${c.lat},${c.lng}`).join('|');
             const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${dc.lat},${dc.lng}&destination=${dc.lat},${dc.lng}&waypoints=optimize:true|${encodeURIComponent(waypointStr)}&key=${GOOGLE_MAPS_API_KEY}`;
             
-            console.log('Calling Google Directions API...');
+            
             const response = await fetch(url);
             const data = await response.json();
             
-            console.log('Google API status:', data.status);
-            console.log('Has routes:', data.routes?.length > 0);
+            
+            
             if (data.routes?.[0]) {
-                console.log('Has overview_polyline:', !!data.routes[0].overview_polyline);
-                console.log('Polyline points:', data.routes[0].overview_polyline?.points?.substring(0, 50));
+                
+                
             }
 
             if (data.status === 'OK' && data.routes[0]) {
@@ -1752,7 +1752,7 @@ async function optimizeStops(companyId, event) {
                 polyline = route.overview_polyline?.points;
                 
                 console.log(`Google optimization: ${customers.length} stops, ${totalMiles.toFixed(1)} miles, ${totalDriveMinutes.toFixed(0)} min`);
-                console.log(`Polyline received: ${polyline ? polyline.substring(0, 50) + '...' : 'NONE'}`);
+                
             }
         } catch (err) {
             console.error('Google Directions API error:', err);
@@ -1761,7 +1761,7 @@ async function optimizeStops(companyId, event) {
 
     // Fallback to local optimization with Haversine distances
     if (optimizedStops.length === 0) {
-        console.log('Using local Haversine optimization...');
+        
         
         const depot = { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) };
         const optimized = nearestNeighborOptimize(customers, depot);
