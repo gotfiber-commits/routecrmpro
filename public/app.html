@@ -1957,8 +1957,22 @@
             const [showModal, setShowModal] = useState(false);
             const [editItem, setEditItem] = useState(null);
             const [loading, setLoading] = useState(false);
+            const [products, setProducts] = useState([]);
 
             const dcOptions = (data?.distributionCenters || []).map(dc => ({ value: dc.id, label: dc.name }));
+
+            // Load products for customer assignment
+            useEffect(() => {
+                const loadProducts = async () => {
+                    try {
+                        const productData = await api.request('/products');
+                        setProducts(productData.filter(p => p.status === 'active'));
+                    } catch (err) {
+                        console.error('Failed to load products:', err);
+                    }
+                };
+                loadProducts();
+            }, []);
 
             const fields = [
                 { type: 'row', fields: [
@@ -2015,11 +2029,26 @@
             const handleSave = async (formData) => {
                 setLoading(true);
                 try {
+                    // Extract customerProducts from formData
+                    const { customerProducts, ...customerData } = formData;
+                    
+                    let customerId;
                     if (editItem) {
-                        await api.request(`/data/customers/${editItem.id}`, { method: 'PUT', body: JSON.stringify(formData) });
+                        await api.request(`/data/customers/${editItem.id}`, { method: 'PUT', body: JSON.stringify(customerData) });
+                        customerId = editItem.id;
                     } else {
-                        await api.request('/data/customers', { method: 'POST', body: JSON.stringify(formData) });
+                        const result = await api.request('/data/customers', { method: 'POST', body: JSON.stringify(customerData) });
+                        customerId = result.id;
                     }
+                    
+                    // Save customer products if any were assigned
+                    if (customerProducts && customerProducts.length > 0 && customerId) {
+                        await api.request(`/data/customers/${customerId}/products`, { 
+                            method: 'PUT', 
+                            body: JSON.stringify({ products: customerProducts }) 
+                        });
+                    }
+                    
                     setShowModal(false);
                     setEditItem(null);
                     onRefresh();
@@ -2071,6 +2100,7 @@
                         <CustomerFormModal
                             editItem={editItem}
                             dcOptions={dcOptions}
+                            products={products}
                             onSave={handleSave}
                             onClose={() => { setShowModal(false); setEditItem(null); }}
                             loading={loading}
@@ -2080,16 +2110,65 @@
             );
         }
 
-        // Customer Form Modal with Address Autocomplete
-        function CustomerFormModal({ editItem, dcOptions, onSave, onClose, loading }) {
+        // Customer Form Modal with Address Autocomplete and Product Assignment
+        function CustomerFormModal({ editItem, dcOptions, products, onSave, onClose, loading }) {
             const defaultData = { status: 'active', customer_type: 'residential', tank_size: 500, current_level: 50, price_per_gallon: 2.50, payment_terms: 'net30', minimum_level: 20 };
             const [formData, setFormData] = useState(() => editItem ? { ...editItem } : { ...defaultData });
             const [error, setError] = useState('');
             const [geocodeMsg, setGeocodeMsg] = useState('');
+            const [customerProducts, setCustomerProducts] = useState({});
+            const [loadingProducts, setLoadingProducts] = useState(false);
+
+            // Load customer products when editing
+            useEffect(() => {
+                if (editItem?.id && products.length > 0) {
+                    loadCustomerProducts();
+                }
+            }, [editItem?.id, products]);
+
+            const loadCustomerProducts = async () => {
+                setLoadingProducts(true);
+                try {
+                    const data = await api.request(`/data/customers/${editItem.id}/products`);
+                    // Convert to map: { productId: { enabled: true, customPrice: null } }
+                    const productMap = {};
+                    (data.products || []).forEach(cp => {
+                        productMap[cp.product_id] = {
+                            enabled: cp.is_enabled,
+                            customPrice: cp.custom_price
+                        };
+                    });
+                    setCustomerProducts(productMap);
+                } catch (err) {
+                    console.error('Failed to load customer products:', err);
+                }
+                setLoadingProducts(false);
+            };
 
             const handleFieldChange = (name, value) => {
                 setFormData(prev => ({ ...prev, [name]: value }));
                 setGeocodeMsg('');
+            };
+
+            const toggleProduct = (productId) => {
+                setCustomerProducts(prev => ({
+                    ...prev,
+                    [productId]: {
+                        enabled: !prev[productId]?.enabled,
+                        customPrice: prev[productId]?.customPrice || null
+                    }
+                }));
+            };
+
+            const setCustomPrice = (productId, price) => {
+                setCustomerProducts(prev => ({
+                    ...prev,
+                    [productId]: {
+                        ...prev[productId],
+                        enabled: true,
+                        customPrice: price ? parseFloat(price) : null
+                    }
+                }));
             };
 
             // Handle address autocomplete selection - auto-populate all address fields
@@ -2110,11 +2189,30 @@
                 e.preventDefault();
                 setError('');
                 try {
-                    await onSave(formData);
+                    // Include customer products in the save data
+                    const saveData = {
+                        ...formData,
+                        customerProducts: Object.entries(customerProducts)
+                            .filter(([_, cp]) => cp.enabled)
+                            .map(([productId, cp]) => ({
+                                product_id: productId,
+                                custom_price: cp.customPrice,
+                                is_enabled: true
+                            }))
+                    };
+                    await onSave(saveData);
                 } catch (err) {
                     setError(err.message);
                 }
             };
+
+            // Group products by category
+            const groupedProducts = (products || []).reduce((acc, p) => {
+                const cat = p.category || 'Uncategorized';
+                if (!acc[cat]) acc[cat] = [];
+                acc[cat].push(p);
+                return acc;
+            }, {});
 
             return (
                 <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -2204,6 +2302,77 @@
                                     { value: 'active', label: 'Active' },
                                     { value: 'inactive', label: 'Inactive' }
                                 ]} />
+                                
+                                {/* Products Assignment Section */}
+                                {products && products.length > 0 && (
+                                    <div style={{background:'var(--bg-dark)',padding:'1rem',borderRadius:'8px',marginTop:'1rem'}}>
+                                        <div style={{marginBottom:'0.75rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                            <strong style={{fontSize:'0.9rem'}}>📦 Products & Pricing</strong>
+                                            {loadingProducts && <span style={{fontSize:'0.8rem',color:'var(--text-muted)'}}>Loading...</span>}
+                                        </div>
+                                        <div style={{fontSize:'0.8rem',color:'var(--text-muted)',marginBottom:'0.75rem'}}>
+                                            Select products this customer receives. Leave price blank for default pricing.
+                                        </div>
+                                        
+                                        {Object.entries(groupedProducts).map(([category, catProducts]) => (
+                                            <div key={category} style={{marginBottom:'0.75rem'}}>
+                                                <div style={{fontSize:'0.75rem',color:'var(--text-muted)',textTransform:'uppercase',marginBottom:'0.5rem'}}>{category}</div>
+                                                {catProducts.map(product => (
+                                                    <div key={product.id} style={{
+                                                        display:'flex',
+                                                        alignItems:'center',
+                                                        gap:'0.75rem',
+                                                        padding:'0.5rem',
+                                                        background: customerProducts[product.id]?.enabled ? 'rgba(99,102,241,0.15)' : 'transparent',
+                                                        borderRadius:'6px',
+                                                        marginBottom:'0.25rem'
+                                                    }}>
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={customerProducts[product.id]?.enabled || false}
+                                                            onChange={() => toggleProduct(product.id)}
+                                                            style={{width:'18px',height:'18px'}}
+                                                        />
+                                                        <div style={{flex:1,minWidth:0}}>
+                                                            <div style={{fontWeight:'500',fontSize:'0.9rem'}}>{product.name}</div>
+                                                            <div style={{fontSize:'0.8rem',color:'var(--text-muted)'}}>
+                                                                Default: ${parseFloat(product.default_price).toFixed(2)} / {product.unit || 'each'}
+                                                                {product.is_exchangeable && ` (+$${parseFloat(product.deposit_amount || 0).toFixed(2)} deposit)`}
+                                                            </div>
+                                                        </div>
+                                                        {customerProducts[product.id]?.enabled && (
+                                                            <div style={{display:'flex',alignItems:'center',gap:'0.25rem'}}>
+                                                                <span style={{fontSize:'0.8rem',color:'var(--text-muted)'}}>$</span>
+                                                                <input 
+                                                                    type="number" 
+                                                                    step="0.01"
+                                                                    placeholder="Default"
+                                                                    value={customerProducts[product.id]?.customPrice || ''}
+                                                                    onChange={(e) => setCustomPrice(product.id, e.target.value)}
+                                                                    style={{
+                                                                        width:'80px',
+                                                                        padding:'0.25rem 0.5rem',
+                                                                        borderRadius:'4px',
+                                                                        border:'1px solid var(--border-color)',
+                                                                        background:'var(--bg-input)',
+                                                                        color:'var(--text-primary)',
+                                                                        fontSize:'0.85rem'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ))}
+                                        
+                                        {Object.keys(groupedProducts).length === 0 && (
+                                            <div style={{textAlign:'center',padding:'1rem',color:'var(--text-muted)',fontSize:'0.9rem'}}>
+                                                No products defined. Add products in Settings → Products & Services.
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             <div className="modal-footer">
                                 <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>

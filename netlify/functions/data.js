@@ -1026,6 +1026,70 @@ async function handleCustomers(method, path, companyId, user, event) {
         return success(result.rows[0], 201);
     }
 
+    // GET /customers/:id/products - Get customer's assigned products
+    if (method === 'GET' && subPath.match(/^\/[a-f0-9-]+\/products$/)) {
+        const id = subPath.split('/')[1];
+        
+        const result = await query(
+            `SELECT cp.*, p.name as product_name, p.code as product_code, 
+                    p.type as product_type, p.unit, p.default_price,
+                    p.is_exchangeable, p.deposit_amount, p.category
+             FROM customer_products cp
+             JOIN products p ON cp.product_id = p.id
+             WHERE cp.customer_id = $1 AND cp.company_id = $2
+             ORDER BY p.sort_order, p.name`,
+            [id, companyId]
+        );
+        
+        return success({ products: result.rows });
+    }
+
+    // PUT /customers/:id/products - Save customer's assigned products
+    if (method === 'PUT' && subPath.match(/^\/[a-f0-9-]+\/products$/)) {
+        if (!requireRole(user, ['admin', 'dispatch', 'accounting'])) {
+            return error('Access denied', 403);
+        }
+        const id = subPath.split('/')[1];
+        const body = parseBody(event);
+        const products = body.products || [];
+        
+        // Verify customer exists
+        const customerCheck = await query(
+            'SELECT id FROM customers WHERE id = $1 AND company_id = $2',
+            [id, companyId]
+        );
+        if (customerCheck.rows.length === 0) {
+            return error('Customer not found', 404);
+        }
+        
+        // Delete existing customer products
+        await query(
+            'DELETE FROM customer_products WHERE customer_id = $1 AND company_id = $2',
+            [id, companyId]
+        );
+        
+        // Insert new customer products
+        for (const product of products) {
+            await query(
+                `INSERT INTO customer_products 
+                 (company_id, customer_id, product_id, custom_price, is_enabled)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [companyId, id, product.product_id, product.custom_price, product.is_enabled !== false]
+            );
+        }
+        
+        // Return updated products
+        const result = await query(
+            `SELECT cp.*, p.name as product_name, p.code as product_code
+             FROM customer_products cp
+             JOIN products p ON cp.product_id = p.id
+             WHERE cp.customer_id = $1 AND cp.company_id = $2`,
+            [id, companyId]
+        );
+        
+        return success({ products: result.rows });
+    }
+
     return error('Not found', 404);
 }
 
