@@ -1002,6 +1002,17 @@ async function handleRuns(method, path, companyId, user, event) {
                  WHERE id = $3`,
                 [body.tank_level_after || 100, gallonsDelivered, stop.customer_id]
             );
+
+            // Record transaction in customer ledger for billing
+            await query(
+                `INSERT INTO customer_transactions 
+                 (company_id, customer_id, transaction_type, amount, reference_type, reference_id, description, created_by)
+                 VALUES ($1, $2, 'delivery', $3, 'stop', $4, $5, $6)
+                 ON CONFLICT DO NOTHING`,
+                [companyId, stop.customer_id, deliveryTotal, stopId,
+                 `Delivery: ${gallonsDelivered.toFixed(1)} gallons @ $${pricePerGallon.toFixed(3)}/gal`,
+                 user.userId]
+            );
         }
 
         // Update run stats
@@ -1170,6 +1181,7 @@ async function handleRuns(method, path, companyId, user, event) {
         let depositsCollected = 0;
         let depositsRefunded = 0;
         let totalGallonEquivalent = 0;
+        const deliveredProducts = []; // Track for transaction description
 
         // Process each item
         for (const item of items) {
@@ -1191,6 +1203,13 @@ async function handleRuns(method, path, companyId, user, event) {
             const qtyCollected = parseInt(item.quantity_collected) || 0;
             const unitPrice = parseFloat(product.effective_price) || 0;
             const lineTotal = qtyDelivered * unitPrice;
+            
+            // Track for description
+            if (qtyDelivered > 0 || qtyCollected > 0) {
+                let desc = `${qtyDelivered} ${product.name}`;
+                if (qtyCollected > 0) desc += ` (${qtyCollected} returned)`;
+                deliveredProducts.push(desc);
+            }
             
             // Calculate deposits
             let itemDepositsCollected = 0;
@@ -1218,7 +1237,7 @@ async function handleRuns(method, path, companyId, user, event) {
             depositsCollected += itemDepositsCollected;
             depositsRefunded += itemDepositsRefunded;
 
-            // Calculate gallon equivalent for reporting
+            // Calculate gallon equivalent for reporting (only if product has it defined)
             if (product.gallon_equivalent && qtyDelivered > 0) {
                 totalGallonEquivalent += qtyDelivered * parseFloat(product.gallon_equivalent);
             }
@@ -1281,6 +1300,43 @@ async function handleRuns(method, path, companyId, user, event) {
                 updated_at = NOW()
              WHERE id = $7 AND run_id = $8 RETURNING *`,
             [totalGallonEquivalent, deliveryTotal, itemsTotal, depositsCollected, depositsRefunded, body.notes, stopId, runId]
+        );
+
+        // Update customer record with delivery info
+        await query(
+            `UPDATE customers SET 
+                last_delivery_date = CURRENT_DATE,
+                updated_at = NOW()
+             WHERE id = $1`,
+            [customerId]
+        );
+        
+        // Only update gallon equivalent if products have it (for propane-type products)
+        if (totalGallonEquivalent > 0) {
+            await query(
+                `UPDATE customers SET 
+                    last_delivery_gallons = COALESCE(last_delivery_gallons, 0) + $1
+                 WHERE id = $2`,
+                [totalGallonEquivalent, customerId]
+            );
+        }
+
+        // Calculate total items delivered and collected
+        const totalDelivered = items.reduce((sum, i) => sum + (parseInt(i.quantity_delivered) || 0), 0);
+        const totalCollected = items.reduce((sum, i) => sum + (parseInt(i.quantity_collected) || 0), 0);
+
+        // Build detailed transaction description
+        const txDescription = deliveredProducts.length > 0 
+            ? deliveredProducts.join(', ')
+            : `Delivery: $${deliveryTotal.toFixed(2)}`;
+
+        // Record transaction in customer ledger for billing
+        await query(
+            `INSERT INTO customer_transactions 
+             (company_id, customer_id, transaction_type, amount, items_delivered, items_collected, reference_type, reference_id, description, created_by)
+             VALUES ($1, $2, 'delivery', $3, $4, $5, 'stop', $6, $7, $8)
+             ON CONFLICT DO NOTHING`,
+            [companyId, customerId, deliveryTotal, totalDelivered, totalCollected, stopId, txDescription, user.userId]
         );
 
         // Update run stats

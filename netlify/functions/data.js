@@ -849,6 +849,183 @@ async function handleCustomers(method, path, companyId, user, event) {
         return success({ message: 'Deleted' });
     }
 
+    // GET /customers/:id/account - Get customer account history
+    if (method === 'GET' && subPath.match(/^\/[a-f0-9-]+\/account$/)) {
+        const id = subPath.split('/')[1];
+        
+        // Get customer info with account summary
+        const customerResult = await query(
+            `SELECT c.*, dc.name as dc_name,
+                    COALESCE(c.account_balance, 0) as account_balance,
+                    c.credit_limit, c.payment_terms
+             FROM customers c
+             LEFT JOIN distribution_centers dc ON c.preferred_dc_id = dc.id
+             WHERE c.id = $1 AND c.company_id = $2`,
+            [id, companyId]
+        );
+        
+        if (customerResult.rows.length === 0) {
+            return error('Customer not found', 404);
+        }
+        
+        const customer = customerResult.rows[0];
+        
+        // Get recent transactions
+        const transactionsResult = await query(
+            `SELECT * FROM customer_transactions 
+             WHERE customer_id = $1 AND company_id = $2
+             ORDER BY transaction_date DESC, created_at DESC
+             LIMIT 50`,
+            [id, companyId]
+        );
+        
+        // Get delivery history with details
+        const deliveriesResult = await query(
+            `SELECT 
+                rrs.id,
+                rrs.arrived_at,
+                rrs.departed_at,
+                rrs.tank_level_before,
+                rrs.tank_level_after,
+                rrs.gallons_delivered,
+                rrs.delivery_total,
+                rrs.delivery_model,
+                rrs.items_total,
+                rrs.deposits_collected,
+                rrs.deposits_refunded,
+                rrs.status,
+                rrs.notes,
+                rr.scheduled_date,
+                rr.name as route_name,
+                d.name as driver_name,
+                t.code as truck_code
+             FROM route_run_stops rrs
+             JOIN route_runs rr ON rrs.run_id = rr.id
+             LEFT JOIN drivers d ON rr.driver_id = d.id
+             LEFT JOIN trucks t ON rr.truck_id = t.id
+             WHERE rrs.customer_id = $1 AND rr.company_id = $2
+             AND rrs.status IN ('completed', 'skipped')
+             ORDER BY rr.scheduled_date DESC, rrs.departed_at DESC
+             LIMIT 100`,
+            [id, companyId]
+        );
+        
+        // Get delivery items for product-based deliveries
+        const deliveryIds = deliveriesResult.rows.filter(d => d.delivery_model === 'products').map(d => d.id);
+        let deliveryItems = [];
+        if (deliveryIds.length > 0) {
+            const itemsResult = await query(
+                `SELECT di.*, p.name as product_name, p.code as product_code
+                 FROM delivery_items di
+                 JOIN products p ON di.product_id = p.id
+                 WHERE di.stop_id = ANY($1)
+                 ORDER BY di.created_at`,
+                [deliveryIds]
+            );
+            deliveryItems = itemsResult.rows;
+        }
+        
+        // Calculate summary stats
+        const statsResult = await query(
+            `SELECT 
+                COUNT(*) as total_deliveries,
+                COALESCE(SUM(gallons_delivered), 0) as total_gallons,
+                COALESCE(SUM(delivery_total), 0) as total_revenue,
+                COALESCE(AVG(NULLIF(gallons_delivered, 0)), 0) as avg_gallons_per_delivery,
+                MIN(rr.scheduled_date) as first_delivery,
+                MAX(rr.scheduled_date) as last_delivery
+             FROM route_run_stops rrs
+             JOIN route_runs rr ON rrs.run_id = rr.id
+             WHERE rrs.customer_id = $1 AND rr.company_id = $2
+             AND rrs.status = 'completed'`,
+            [id, companyId]
+        );
+        
+        // Get product-based stats from delivery_items
+        const productStatsResult = await query(
+            `SELECT 
+                COALESCE(SUM(di.quantity_delivered), 0) as total_items_delivered,
+                COALESCE(SUM(di.quantity_collected), 0) as total_items_collected,
+                COALESCE(SUM(di.line_total), 0) as total_product_revenue,
+                COALESCE(SUM(di.deposit_collected), 0) as total_deposits_collected,
+                COALESCE(SUM(di.deposit_refunded), 0) as total_deposits_refunded
+             FROM delivery_items di
+             JOIN route_run_stops rrs ON di.stop_id = rrs.id
+             WHERE rrs.customer_id = $1 AND di.company_id = $2`,
+            [id, companyId]
+        );
+        
+        return success({
+            customer,
+            transactions: transactionsResult.rows,
+            deliveries: deliveriesResult.rows,
+            deliveryItems,
+            stats: {
+                ...statsResult.rows[0],
+                ...productStatsResult.rows[0]
+            }
+        });
+    }
+
+    // POST /customers/:id/payment - Record a payment
+    if (method === 'POST' && subPath.match(/^\/[a-f0-9-]+\/payment$/)) {
+        if (!requireRole(user, ['admin', 'accounting'])) {
+            return error('Access denied', 403);
+        }
+        const id = subPath.split('/')[1];
+        const body = parseBody(event);
+        
+        if (!body.amount || body.amount <= 0) {
+            return error('Valid payment amount required', 400);
+        }
+        
+        // Record payment transaction (negative amount since it reduces balance)
+        const result = await query(
+            `INSERT INTO customer_transactions 
+             (company_id, customer_id, transaction_type, amount, description, created_by)
+             VALUES ($1, $2, 'payment', $3, $4, $5)
+             RETURNING *`,
+            [companyId, id, -Math.abs(body.amount), body.description || 'Payment received', user.userId]
+        );
+        
+        // Update customer last payment info
+        await query(
+            `UPDATE customers SET 
+                last_payment_date = CURRENT_DATE,
+                last_payment_amount = $1,
+                updated_at = NOW()
+             WHERE id = $2 AND company_id = $3`,
+            [Math.abs(body.amount), id, companyId]
+        );
+        
+        return success(result.rows[0], 201);
+    }
+
+    // POST /customers/:id/credit - Apply credit/adjustment
+    if (method === 'POST' && subPath.match(/^\/[a-f0-9-]+\/credit$/)) {
+        if (!requireRole(user, ['admin', 'accounting'])) {
+            return error('Access denied', 403);
+        }
+        const id = subPath.split('/')[1];
+        const body = parseBody(event);
+        
+        if (!body.amount) {
+            return error('Amount required', 400);
+        }
+        
+        // Record credit/adjustment (negative reduces balance, positive adds to balance)
+        const transactionType = body.amount < 0 ? 'credit' : 'adjustment';
+        const result = await query(
+            `INSERT INTO customer_transactions 
+             (company_id, customer_id, transaction_type, amount, description, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING *`,
+            [companyId, id, transactionType, body.amount, body.description || transactionType, user.userId]
+        );
+        
+        return success(result.rows[0], 201);
+    }
+
     return error('Not found', 404);
 }
 
