@@ -627,6 +627,7 @@
             const [data, setData] = useState(null);
             const [loading, setLoading] = useState(true);
             const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+            const [selectedCustomerId, setSelectedCustomerId] = useState(null);
 
             useEffect(() => { loadData(); }, []);
 
@@ -644,6 +645,7 @@
 
             const handleNavClick = (viewId) => {
                 setActiveView(viewId);
+                setSelectedCustomerId(null); // Clear selected customer on regular nav
                 setMobileMenuOpen(false); // Close mobile menu on navigation
             };
 
@@ -661,9 +663,6 @@
             
             if (user?.role === 'admin') {
                 navItems.push(
-                    { id: 'products', icon: '📦', label: 'Products & Services' },
-                    { id: 'users', icon: '👤', label: 'Users' },
-                    { id: 'integrations', icon: '🔗', label: 'Integrations' },
                     { id: 'settings', icon: '⚙️', label: 'Settings' },
                     { id: 'billing', icon: '💳', label: 'Billing' }
                 );
@@ -713,8 +712,15 @@
                             <div className="loading"><div className="spinner"></div><div style={{marginTop:'1rem'}}>Loading...</div></div>
                         ) : (
                             <>
-                                {activeView === 'dashboard' && <DashboardView data={data} onRefresh={loadData} onNavigate={(view, placeData) => { setActiveView(view); if (placeData) window.pendingRouteLocation = placeData; }} />}
-                                {activeView === 'customers' && <CustomersView data={data} onRefresh={loadData} />}
+                                {activeView === 'dashboard' && <DashboardView data={data} onRefresh={loadData} onNavigate={(view, extraData) => { 
+                                    setActiveView(view); 
+                                    if (view === 'customers' && extraData?.customerId) {
+                                        setSelectedCustomerId(extraData.customerId);
+                                    } else if (extraData && view !== 'customers') {
+                                        window.pendingRouteLocation = extraData;
+                                    }
+                                }} />}
+                                {activeView === 'customers' && <CustomersView data={data} onRefresh={loadData} selectedCustomerId={selectedCustomerId} onClearSelection={() => setSelectedCustomerId(null)} />}
                                 {activeView === 'orders' && <OrdersView data={data} onRefresh={loadData} />}
                                 {activeView === 'route-templates' && <RouteTemplatesView data={data} onRefresh={loadData} />}
                                 {activeView === 'active-routes' && <ActiveRoutesView data={data} onRefresh={loadData} />}
@@ -722,10 +728,7 @@
                                 {activeView === 'trucks' && <TrucksView data={data} onRefresh={loadData} />}
                                 {activeView === 'drivers' && <DriversView data={data} onRefresh={loadData} />}
                                 {activeView === 'dcs' && <DCsView data={data} onRefresh={loadData} />}
-                                {activeView === 'products' && <ProductsView onRefresh={loadData} />}
-                                {activeView === 'users' && <UsersView data={data} onRefresh={loadData} />}
-                                {activeView === 'integrations' && <IntegrationsView data={data} onRefresh={loadData} />}
-                                {activeView === 'settings' && <CompanySettingsView onRefresh={loadData} />}
+                                {activeView === 'settings' && <SettingsView data={data} onRefresh={loadData} />}
                                 {activeView === 'reports' && <ReportsView data={data} />}
                                 {activeView === 'billing' && <BillingView />}
                             </>
@@ -1252,7 +1255,7 @@
                     });
                     marker.addListener('click', () => infoWindow.open(map, marker));
                     google.maps.event.addListener(infoWindow, 'domready', () => {
-                        document.getElementById(`cust-detail-btn-${cust.id}`)?.addEventListener('click', () => { infoWindow.close(); if (onNavigate) onNavigate('customers'); });
+                        document.getElementById(`cust-detail-btn-${cust.id}`)?.addEventListener('click', () => { infoWindow.close(); if (onNavigate) onNavigate('customers', { customerId: cust.id }); });
                     });
                     markersRef.current.push(marker);
                     bounds.extend(marker.getPosition());
@@ -1953,13 +1956,25 @@
         // =====================================================
         // CUSTOMERS VIEW
         // =====================================================
-        function CustomersView({ data, onRefresh }) {
+        function CustomersView({ data, onRefresh, selectedCustomerId, onClearSelection }) {
             const [showModal, setShowModal] = useState(false);
             const [editItem, setEditItem] = useState(null);
             const [loading, setLoading] = useState(false);
             const [products, setProducts] = useState([]);
+            const [viewingCustomer, setViewingCustomer] = useState(null);
 
             const dcOptions = (data?.distributionCenters || []).map(dc => ({ value: dc.id, label: dc.name }));
+
+            // Auto-open customer account when navigating from map
+            useEffect(() => {
+                if (selectedCustomerId && data?.customers) {
+                    const customer = data.customers.find(c => c.id === selectedCustomerId);
+                    if (customer) {
+                        setViewingCustomer(customer); // Open account view, not edit modal
+                    }
+                    if (onClearSelection) onClearSelection();
+                }
+            }, [selectedCustomerId, data?.customers]);
 
             // Load products for customer assignment
             useEffect(() => {
@@ -2075,7 +2090,7 @@
                             <tbody>
                                 {(data?.customers || []).map(item => (
                                     <tr key={item.id}>
-                                        <td><strong>{item.code}</strong></td>
+                                        <td><strong style={{color:'var(--primary)',cursor:'pointer'}} onClick={() => setViewingCustomer(item)}>{item.code}</strong></td>
                                         <td>{item.name}<br/><span className="text-muted" style={{fontSize:'0.85rem'}}>{item.contact_name}</span></td>
                                         <td>{item.city}, {item.state}</td>
                                         <td style={{textTransform:'capitalize'}}>{item.customer_type}</td>
@@ -2084,6 +2099,7 @@
                                         <td><span className={`status-badge status-${item.status}`}>{item.status}</span></td>
                                         <td>
                                             <div className="action-buttons">
+                                                <button className="btn btn-sm btn-primary" onClick={() => setViewingCustomer(item)}>View</button>
                                                 <button className="btn btn-sm btn-secondary" onClick={() => { setEditItem(item); setShowModal(true); }}>Edit</button>
                                                 <button className="btn btn-sm btn-danger" onClick={() => handleDelete(item.id)}>Delete</button>
                                             </div>
@@ -2096,6 +2112,13 @@
                             </tbody>
                         </table>
                     </div>
+                    {viewingCustomer && (
+                        <CustomerAccountModal 
+                            customer={viewingCustomer} 
+                            onClose={() => setViewingCustomer(null)}
+                            onEdit={() => { setEditItem(viewingCustomer); setShowModal(true); setViewingCustomer(null); }}
+                        />
+                    )}
                     {showModal && (
                         <CustomerFormModal
                             editItem={editItem}
@@ -2276,20 +2299,35 @@
                                     <FormInput name="preferred_dc_id" label="Preferred DC" type="select" value={formData.preferred_dc_id} onChange={handleFieldChange} options={dcOptions} />
                                 </div>
                                 
-                                <div className="form-row">
-                                    <FormInput name="tank_size" label="Tank Size (gallons)" type="number" value={formData.tank_size} onChange={handleFieldChange} />
-                                    <FormInput name="current_level" label="Current Level (%)" type="number" step="0.01" value={formData.current_level} onChange={handleFieldChange} />
-                                </div>
+                                {/* Only show gallon-specific fields if no products defined (bulk gallon mode) */}
+                                {(!products || products.length === 0) && (
+                                    <>
+                                        <div className="form-row">
+                                            <FormInput name="tank_size" label="Tank Size (gallons)" type="number" value={formData.tank_size} onChange={handleFieldChange} />
+                                            <FormInput name="current_level" label="Current Level (%)" type="number" step="0.01" value={formData.current_level} onChange={handleFieldChange} />
+                                        </div>
+                                        
+                                        <div className="form-row">
+                                            <FormInput name="price_per_gallon" label="Price per Gallon ($)" type="number" step="0.01" value={formData.price_per_gallon} onChange={handleFieldChange} />
+                                            <FormInput name="payment_terms" label="Payment Terms" type="select" value={formData.payment_terms} onChange={handleFieldChange} options={[
+                                                { value: 'net30', label: 'Net 30' },
+                                                { value: 'net15', label: 'Net 15' },
+                                                { value: 'due_on_delivery', label: 'Due on Delivery' },
+                                                { value: 'prepaid', label: 'Prepaid' }
+                                            ]} />
+                                        </div>
+                                    </>
+                                )}
                                 
-                                <div className="form-row">
-                                    <FormInput name="price_per_gallon" label="Price per Gallon ($)" type="number" step="0.01" value={formData.price_per_gallon} onChange={handleFieldChange} />
+                                {/* Payment terms when using products */}
+                                {products && products.length > 0 && (
                                     <FormInput name="payment_terms" label="Payment Terms" type="select" value={formData.payment_terms} onChange={handleFieldChange} options={[
                                         { value: 'net30', label: 'Net 30' },
                                         { value: 'net15', label: 'Net 15' },
                                         { value: 'due_on_delivery', label: 'Due on Delivery' },
                                         { value: 'prepaid', label: 'Prepaid' }
                                     ]} />
-                                </div>
+                                )}
                                 
                                 <FormInput name="delivery_instructions" label="Delivery Instructions" type="textarea" value={formData.delivery_instructions} onChange={handleFieldChange} />
                                 
@@ -2379,6 +2417,303 @@
                                 <button type="submit" className="btn btn-primary" disabled={loading}>{loading ? 'Saving...' : 'Save'}</button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            );
+        }
+
+        // Customer Account Modal - Shows full customer details, history, transactions
+        function CustomerAccountModal({ customer, onClose, onEdit }) {
+            const [accountData, setAccountData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [activeTab, setActiveTab] = useState('overview');
+            const [showPaymentForm, setShowPaymentForm] = useState(false);
+            const [paymentAmount, setPaymentAmount] = useState('');
+            const [paymentNote, setPaymentNote] = useState('');
+            const [processingPayment, setProcessingPayment] = useState(false);
+
+            useEffect(() => {
+                loadAccountData();
+            }, [customer.id]);
+
+            const loadAccountData = async () => {
+                setLoading(true);
+                try {
+                    const data = await api.request(`/data/customers/${customer.id}/account`);
+                    setAccountData(data);
+                } catch (err) {
+                    console.error('Failed to load account data:', err);
+                }
+                setLoading(false);
+            };
+
+            const handleRecordPayment = async () => {
+                if (!paymentAmount || parseFloat(paymentAmount) <= 0) return;
+                setProcessingPayment(true);
+                try {
+                    await api.request(`/data/customers/${customer.id}/payment`, {
+                        method: 'POST',
+                        body: JSON.stringify({ 
+                            amount: parseFloat(paymentAmount),
+                            description: paymentNote || 'Payment received'
+                        })
+                    });
+                    setShowPaymentForm(false);
+                    setPaymentAmount('');
+                    setPaymentNote('');
+                    loadAccountData();
+                } catch (err) {
+                    alert('Failed to record payment: ' + err.message);
+                }
+                setProcessingPayment(false);
+            };
+
+            const formatDate = (dateStr) => {
+                if (!dateStr) return '-';
+                return new Date(dateStr).toLocaleDateString();
+            };
+
+            const formatCurrency = (amount) => {
+                return '$' + (parseFloat(amount) || 0).toFixed(2);
+            };
+
+            const modalStyles = `
+                .customer-account-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+                .customer-account-content { background: var(--bg-card); border-radius: 16px; width: 100%; max-width: 900px; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; }
+                .customer-account-header { padding: 1.25rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: flex-start; }
+                .customer-account-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-color); padding: 0 1rem; }
+                .customer-account-tab { padding: 0.75rem 1.25rem; background: none; border: none; color: var(--text-muted); cursor: pointer; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+                .customer-account-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+                .customer-account-body { flex: 1; overflow-y: auto; padding: 1.25rem; }
+                .account-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+                .account-stat { background: var(--bg-dark); padding: 1rem; border-radius: 12px; text-align: center; }
+                .account-stat-value { font-size: 1.5rem; font-weight: 700; }
+                .account-stat-label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
+                .info-section { margin-bottom: 1.5rem; }
+                .info-section-title { font-weight: 600; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
+                .info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
+                .info-row { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color); }
+                .info-label { color: var(--text-muted); }
+                .info-value { font-weight: 500; }
+                .transaction-row { display: flex; align-items: center; padding: 0.75rem; background: var(--bg-dark); border-radius: 8px; margin-bottom: 0.5rem; }
+                .transaction-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 0.75rem; font-size: 1.1rem; }
+                .transaction-icon.delivery { background: rgba(99,102,241,0.15); }
+                .transaction-icon.payment { background: rgba(16,185,129,0.15); }
+                .transaction-icon.credit { background: rgba(245,158,11,0.15); }
+                .transaction-info { flex: 1; }
+                .transaction-desc { font-weight: 500; }
+                .transaction-date { font-size: 0.8rem; color: var(--text-muted); }
+                .transaction-amount { font-weight: 600; }
+                .transaction-amount.positive { color: var(--danger); }
+                .transaction-amount.negative { color: var(--success); }
+                .delivery-row { background: var(--bg-dark); border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem; }
+                .delivery-header { display: flex; justify-content: space-between; margin-bottom: 0.5rem; }
+                .delivery-items { font-size: 0.85rem; color: var(--text-muted); }
+                .product-list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+                .product-tag { background: var(--bg-input); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; }
+                .payment-form { background: var(--bg-dark); padding: 1rem; border-radius: 12px; margin-bottom: 1rem; }
+                .payment-form-row { display: flex; gap: 0.75rem; align-items: flex-end; }
+                .payment-input { flex: 1; }
+                @media (max-width: 640px) { .account-stats { grid-template-columns: repeat(2, 1fr); } .info-grid { grid-template-columns: 1fr; } }
+            `;
+
+            const stats = accountData?.stats || {};
+            const balance = parseFloat(accountData?.customer?.account_balance) || 0;
+
+            return (
+                <div className="customer-account-modal" onClick={(e) => e.target === e.currentTarget && onClose()}>
+                    <style>{modalStyles}</style>
+                    <div className="customer-account-content">
+                        <div className="customer-account-header">
+                            <div>
+                                <h2 style={{margin:0,fontSize:'1.25rem'}}>{customer.name}</h2>
+                                <div style={{color:'var(--text-muted)',marginTop:'0.25rem'}}>{customer.code} · {customer.city}, {customer.state}</div>
+                            </div>
+                            <div style={{display:'flex',gap:'0.5rem',alignItems:'center'}}>
+                                <button className="btn btn-secondary btn-sm" onClick={onEdit}>✏️ Edit</button>
+                                <button className="icon-btn" onClick={onClose} style={{width:'32px',height:'32px'}}>✕</button>
+                            </div>
+                        </div>
+
+                        <div className="customer-account-tabs">
+                            <button className={`customer-account-tab ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>Overview</button>
+                            <button className={`customer-account-tab ${activeTab === 'deliveries' ? 'active' : ''}`} onClick={() => setActiveTab('deliveries')}>Deliveries</button>
+                            <button className={`customer-account-tab ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}>Transactions</button>
+                        </div>
+
+                        <div className="customer-account-body">
+                            {loading ? (
+                                <div style={{textAlign:'center',padding:'2rem'}}><div className="spinner"></div></div>
+                            ) : (
+                                <>
+                                    {activeTab === 'overview' && (
+                                        <>
+                                            <div className="account-stats">
+                                                <div className="account-stat">
+                                                    <div className="account-stat-value" style={{color: balance > 0 ? 'var(--danger)' : 'var(--success)'}}>
+                                                        {formatCurrency(Math.abs(balance))}
+                                                    </div>
+                                                    <div className="account-stat-label">{balance > 0 ? 'Balance Due' : balance < 0 ? 'Credit' : 'Balance'}</div>
+                                                </div>
+                                                <div className="account-stat">
+                                                    <div className="account-stat-value">{stats.total_deliveries || 0}</div>
+                                                    <div className="account-stat-label">Total Deliveries</div>
+                                                </div>
+                                                <div className="account-stat">
+                                                    <div className="account-stat-value">{formatCurrency(stats.total_revenue)}</div>
+                                                    <div className="account-stat-label">Total Revenue</div>
+                                                </div>
+                                                <div className="account-stat">
+                                                    <div className="account-stat-value">{stats.total_items_delivered || stats.total_gallons || 0}</div>
+                                                    <div className="account-stat-label">{stats.total_items_delivered ? 'Items Delivered' : 'Gallons'}</div>
+                                                </div>
+                                            </div>
+
+                                            {/* Record Payment */}
+                                            {balance > 0 && (
+                                                <div style={{marginBottom:'1.5rem'}}>
+                                                    {!showPaymentForm ? (
+                                                        <button className="btn btn-success" onClick={() => setShowPaymentForm(true)}>💵 Record Payment</button>
+                                                    ) : (
+                                                        <div className="payment-form">
+                                                            <div style={{fontWeight:'600',marginBottom:'0.75rem'}}>Record Payment</div>
+                                                            <div className="payment-form-row">
+                                                                <div className="payment-input">
+                                                                    <label style={{fontSize:'0.8rem',color:'var(--text-muted)'}}>Amount</label>
+                                                                    <input 
+                                                                        type="number" 
+                                                                        step="0.01" 
+                                                                        value={paymentAmount} 
+                                                                        onChange={(e) => setPaymentAmount(e.target.value)}
+                                                                        placeholder="0.00"
+                                                                        style={{width:'100%',padding:'0.5rem',borderRadius:'6px',border:'1px solid var(--border-color)',background:'var(--bg-input)',color:'var(--text-primary)'}}
+                                                                    />
+                                                                </div>
+                                                                <div className="payment-input" style={{flex:2}}>
+                                                                    <label style={{fontSize:'0.8rem',color:'var(--text-muted)'}}>Note (optional)</label>
+                                                                    <input 
+                                                                        type="text" 
+                                                                        value={paymentNote} 
+                                                                        onChange={(e) => setPaymentNote(e.target.value)}
+                                                                        placeholder="Check #, reference, etc."
+                                                                        style={{width:'100%',padding:'0.5rem',borderRadius:'6px',border:'1px solid var(--border-color)',background:'var(--bg-input)',color:'var(--text-primary)'}}
+                                                                    />
+                                                                </div>
+                                                                <button className="btn btn-success" onClick={handleRecordPayment} disabled={processingPayment}>
+                                                                    {processingPayment ? '...' : 'Save'}
+                                                                </button>
+                                                                <button className="btn btn-secondary" onClick={() => setShowPaymentForm(false)}>Cancel</button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            <div className="info-section">
+                                                <div className="info-section-title">📋 Customer Information</div>
+                                                <div className="info-grid">
+                                                    <div>
+                                                        <div className="info-row"><span className="info-label">Contact</span><span className="info-value">{customer.contact_name || '-'}</span></div>
+                                                        <div className="info-row"><span className="info-label">Phone</span><span className="info-value">{customer.phone || '-'}</span></div>
+                                                        <div className="info-row"><span className="info-label">Email</span><span className="info-value">{customer.email || '-'}</span></div>
+                                                        <div className="info-row"><span className="info-label">Type</span><span className="info-value" style={{textTransform:'capitalize'}}>{customer.customer_type}</span></div>
+                                                    </div>
+                                                    <div>
+                                                        <div className="info-row"><span className="info-label">Address</span><span className="info-value">{customer.address}</span></div>
+                                                        <div className="info-row"><span className="info-label">City/State</span><span className="info-value">{customer.city}, {customer.state} {customer.zip}</span></div>
+                                                        <div className="info-row"><span className="info-label">Payment Terms</span><span className="info-value" style={{textTransform:'capitalize'}}>{(customer.payment_terms || 'net30').replace('_', ' ')}</span></div>
+                                                        <div className="info-row"><span className="info-label">Last Delivery</span><span className="info-value">{formatDate(customer.last_delivery_date)}</span></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Recent Transactions */}
+                                            <div className="info-section">
+                                                <div className="info-section-title">💳 Recent Transactions</div>
+                                                {(accountData?.transactions || []).slice(0, 5).map((tx, idx) => (
+                                                    <div key={idx} className="transaction-row">
+                                                        <div className={`transaction-icon ${tx.transaction_type}`}>
+                                                            {tx.transaction_type === 'delivery' ? '🚚' : tx.transaction_type === 'payment' ? '💵' : '📝'}
+                                                        </div>
+                                                        <div className="transaction-info">
+                                                            <div className="transaction-desc">{tx.description || tx.transaction_type}</div>
+                                                            <div className="transaction-date">{formatDate(tx.transaction_date)}</div>
+                                                        </div>
+                                                        <div className={`transaction-amount ${parseFloat(tx.amount) < 0 ? 'negative' : 'positive'}`}>
+                                                            {parseFloat(tx.amount) < 0 ? '-' : '+'}{formatCurrency(Math.abs(tx.amount))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                {(!accountData?.transactions || accountData.transactions.length === 0) && (
+                                                    <div style={{textAlign:'center',padding:'1rem',color:'var(--text-muted)'}}>No transactions yet</div>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {activeTab === 'deliveries' && (
+                                        <div className="info-section">
+                                            <div className="info-section-title">🚚 Delivery History</div>
+                                            {(accountData?.deliveries || []).map((del, idx) => (
+                                                <div key={idx} className="delivery-row">
+                                                    <div className="delivery-header">
+                                                        <div>
+                                                            <strong>{formatDate(del.scheduled_date)}</strong>
+                                                            <span style={{color:'var(--text-muted)',marginLeft:'0.5rem'}}>{del.route_name}</span>
+                                                        </div>
+                                                        <div style={{fontWeight:'600'}}>{formatCurrency(del.delivery_total)}</div>
+                                                    </div>
+                                                    <div className="delivery-items">
+                                                        {del.delivery_model === 'products' ? (
+                                                            <>Items delivered: {del.gallons_delivered || 0}</>
+                                                        ) : (
+                                                            <>{del.gallons_delivered || 0} gallons · Tank: {del.tank_level_before}% → {del.tank_level_after}%</>
+                                                        )}
+                                                        {del.driver_name && <> · Driver: {del.driver_name}</>}
+                                                    </div>
+                                                    {del.notes && <div style={{marginTop:'0.5rem',fontSize:'0.85rem',fontStyle:'italic'}}>Note: {del.notes}</div>}
+                                                </div>
+                                            ))}
+                                            {(!accountData?.deliveries || accountData.deliveries.length === 0) && (
+                                                <div style={{textAlign:'center',padding:'2rem',color:'var(--text-muted)'}}>No delivery history</div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {activeTab === 'transactions' && (
+                                        <div className="info-section">
+                                            <div className="info-section-title" style={{justifyContent:'space-between'}}>
+                                                <span>💳 All Transactions</span>
+                                                <span style={{fontSize:'0.9rem',color: balance > 0 ? 'var(--danger)' : 'var(--success)'}}>
+                                                    Balance: {formatCurrency(balance)}
+                                                </span>
+                                            </div>
+                                            {(accountData?.transactions || []).map((tx, idx) => (
+                                                <div key={idx} className="transaction-row">
+                                                    <div className={`transaction-icon ${tx.transaction_type}`}>
+                                                        {tx.transaction_type === 'delivery' ? '🚚' : tx.transaction_type === 'payment' ? '💵' : tx.transaction_type === 'credit' ? '🎁' : '📝'}
+                                                    </div>
+                                                    <div className="transaction-info">
+                                                        <div className="transaction-desc">{tx.description || tx.transaction_type}</div>
+                                                        <div className="transaction-date">
+                                                            {formatDate(tx.transaction_date)}
+                                                            {tx.items_delivered > 0 && <> · {tx.items_delivered} items</>}
+                                                            {tx.items_collected > 0 && <> · {tx.items_collected} returned</>}
+                                                        </div>
+                                                    </div>
+                                                    <div className={`transaction-amount ${parseFloat(tx.amount) < 0 ? 'negative' : 'positive'}`}>
+                                                        {parseFloat(tx.amount) < 0 ? '-' : '+'}{formatCurrency(Math.abs(tx.amount))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {(!accountData?.transactions || accountData.transactions.length === 0) && (
+                                                <div style={{textAlign:'center',padding:'2rem',color:'var(--text-muted)'}}>No transactions yet</div>
+                                            )}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
                     </div>
                 </div>
             );
@@ -6208,9 +6543,63 @@
         }
 
         // =====================================================
+        // SETTINGS VIEW - Consolidated Settings Hub
+        // =====================================================
+        function SettingsView({ data, onRefresh }) {
+            const [activeTab, setActiveTab] = useState('company');
+
+            const tabs = [
+                { id: 'company', icon: '🏢', label: 'Company' },
+                { id: 'products', icon: '📦', label: 'Products & Services' },
+                { id: 'users', icon: '👤', label: 'Users' },
+                { id: 'integrations', icon: '🔗', label: 'Integrations' },
+            ];
+
+            return (
+                <>
+                    <div className="page-header">
+                        <h1 className="page-title">⚙️ Settings</h1>
+                    </div>
+                    
+                    {/* Settings Tabs */}
+                    <div style={{display:'flex',gap:'0',borderBottom:'1px solid var(--border-color)',marginBottom:'1.5rem',overflowX:'auto'}}>
+                        {tabs.map(tab => (
+                            <button 
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id)}
+                                style={{
+                                    padding:'0.75rem 1.25rem',
+                                    background:'none',
+                                    border:'none',
+                                    borderBottom: activeTab === tab.id ? '2px solid var(--primary)' : '2px solid transparent',
+                                    color: activeTab === tab.id ? 'var(--primary)' : 'var(--text-muted)',
+                                    cursor:'pointer',
+                                    fontWeight:'500',
+                                    display:'flex',
+                                    alignItems:'center',
+                                    gap:'0.5rem',
+                                    whiteSpace:'nowrap'
+                                }}
+                            >
+                                <span>{tab.icon}</span>
+                                <span>{tab.label}</span>
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Tab Content */}
+                    {activeTab === 'company' && <CompanySettingsContent onRefresh={onRefresh} />}
+                    {activeTab === 'products' && <ProductsContent onRefresh={onRefresh} />}
+                    {activeTab === 'users' && <UsersContent data={data} onRefresh={onRefresh} />}
+                    {activeTab === 'integrations' && <IntegrationsContent data={data} onRefresh={onRefresh} />}
+                </>
+            );
+        }
+
+        // =====================================================
         // PRODUCTS & SERVICES VIEW (Admin Only)
         // =====================================================
-        function ProductsView({ onRefresh }) {
+        function ProductsContent({ onRefresh }) {
             const [products, setProducts] = useState([]);
             const [loading, setLoading] = useState(true);
             const [showModal, setShowModal] = useState(false);
@@ -6310,8 +6699,8 @@
 
             return (
                 <>
-                    <div className="page-header">
-                        <h1 className="page-title">📦 Products & Services</h1>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
+                        <h3 style={{margin:0}}>📦 Products & Services</h3>
                         {!migrationNeeded && <button className="btn btn-primary" onClick={() => { setEditItem(null); setShowModal(true); }}>+ Add Product</button>}
                     </div>
 
@@ -6403,7 +6792,7 @@
         // =====================================================
         // COMPANY SETTINGS VIEW (Admin Only)
         // =====================================================
-        function CompanySettingsView({ onRefresh }) {
+        function CompanySettingsContent({ onRefresh }) {
             const [settings, setSettings] = useState({
                 delivery_model: 'gallons',
                 track_empties: false,
@@ -6454,9 +6843,7 @@
 
             return (
                 <>
-                    <div className="page-header">
-                        <h1 className="page-title">⚙️ Company Settings</h1>
-                    </div>
+                    <h3 style={{marginBottom:'1rem'}}>🏢 Company Settings</h3>
 
                     <div className="card" style={{maxWidth:'600px'}}>
                         <h3 style={{marginBottom:'1.5rem'}}>Delivery Model</h3>
@@ -6538,7 +6925,7 @@
         // =====================================================
         // USERS VIEW (Admin Only)
         // =====================================================
-        function UsersView({ data, onRefresh }) {
+        function UsersContent({ data, onRefresh }) {
             const [showModal, setShowModal] = useState(false);
             const [editItem, setEditItem] = useState(null);
             const [loading, setLoading] = useState(false);
@@ -6645,8 +7032,8 @@
 
             return (
                 <>
-                    <div className="page-header">
-                        <h1 className="page-title">👤 Users</h1>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
+                        <h3 style={{margin:0}}>👤 Users</h3>
                         <button className="btn btn-primary" onClick={() => { setEditItem(null); setShowModal(true); }}>+ Add User</button>
                     </div>
                     <div className="table-container">
@@ -6739,7 +7126,8 @@
                 { id: 'routes', icon: '🗺️', label: 'Route Performance', desc: 'Route efficiency and completion rates' },
                 { id: 'drivers', icon: '👷', label: 'Driver Performance', desc: 'Driver productivity and metrics' },
                 { id: 'trucks', icon: '🚚', label: 'Fleet Report', desc: 'Vehicle utilization and fuel efficiency' },
-                { id: 'customers', icon: '👥', label: 'Customer Report', desc: 'Delivery history and tank status' },
+                { id: 'customers', icon: '👥', label: 'Customer Report', desc: 'Delivery history and account balances' },
+                { id: 'products', icon: '📦', label: 'Product Sales', desc: 'Product revenue and inventory' },
                 { id: 'financial', icon: '💰', label: 'Financial Report', desc: 'Revenue, costs, and profitability' },
                 { id: 'daily', icon: '📅', label: 'Daily Summary', desc: 'Day-by-day breakdown' }
             ];
@@ -6873,7 +7261,7 @@
             // Render Executive Dashboard
             const renderDashboard = () => {
                 if (!reportData) return null;
-                const { summary, metrics, fleet, top_drivers, daily_trend } = reportData;
+                const { summary, metrics, product_metrics, accounts_receivable, fleet, top_drivers, top_products, daily_trend } = reportData;
                 return (
                     <>
                         {/* KPI Cards Row */}
@@ -6889,9 +7277,11 @@
                                 <div style={{marginTop:'0.5rem',fontSize:'0.8rem'}}>{summary?.delivery_success_rate}% success rate</div>
                             </div>
                             <div className="stat-card" style={{background:'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',color:'white'}}>
-                                <div className="stat-value" style={{fontSize:'2rem'}}>{formatNumber(metrics?.total_gallons)}</div>
-                                <div className="stat-label" style={{color:'rgba(255,255,255,0.8)'}}>Gallons Delivered</div>
-                                <div style={{marginTop:'0.5rem',fontSize:'0.8rem'}}>${metrics?.revenue_per_gallon}/gal avg</div>
+                                <div className="stat-value" style={{fontSize:'2rem'}}>{formatNumber(product_metrics?.total_items_delivered || metrics?.total_gallons)}</div>
+                                <div className="stat-label" style={{color:'rgba(255,255,255,0.8)'}}>{product_metrics?.total_items_delivered ? 'Items Delivered' : 'Gallons Delivered'}</div>
+                                <div style={{marginTop:'0.5rem',fontSize:'0.8rem'}}>
+                                    {product_metrics?.total_items_collected > 0 ? `${formatNumber(product_metrics.total_items_collected)} collected` : `$${metrics?.revenue_per_gallon}/gal avg`}
+                                </div>
                             </div>
                             <div className="stat-card" style={{background:'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',color:'white'}}>
                                 <div className="stat-value" style={{fontSize:'2rem'}}>{formatCurrency(metrics?.total_revenue)}</div>
@@ -6907,6 +7297,31 @@
                                 <BarChart data={daily_trend} labelKey="date" valueKey="revenue" color="#10b981" height={180}/>
                             </div>
 
+                            {/* Accounts Receivable */}
+                            {accounts_receivable && (
+                                <div className="card">
+                                    <h3 style={{marginBottom:'1rem'}}>💳 Accounts Receivable</h3>
+                                    <div style={{display:'grid',gap:'1rem'}}>
+                                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'1rem',background:'var(--bg-dark)',borderRadius:'8px'}}>
+                                            <span>Total Outstanding</span>
+                                            <span style={{fontSize:'1.5rem',fontWeight:'700',color: accounts_receivable.total_outstanding > 0 ? 'var(--danger)' : 'var(--success)'}}>
+                                                {formatCurrency(accounts_receivable.total_outstanding)}
+                                            </span>
+                                        </div>
+                                        <div className="stats-grid" style={{gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
+                                            <div style={{textAlign:'center',padding:'0.75rem',background:'var(--bg-dark)',borderRadius:'8px'}}>
+                                                <div style={{fontSize:'1.25rem',fontWeight:'700'}}>{accounts_receivable.customers_with_balance}</div>
+                                                <div style={{fontSize:'0.75rem',color:'var(--text-muted)'}}>Customers w/Balance</div>
+                                            </div>
+                                            <div style={{textAlign:'center',padding:'0.75rem',background:'var(--bg-dark)',borderRadius:'8px'}}>
+                                                <div style={{fontSize:'1.25rem',fontWeight:'700',color: accounts_receivable.over_credit_limit > 0 ? 'var(--danger)' : 'var(--success)'}}>{accounts_receivable.over_credit_limit}</div>
+                                                <div style={{fontSize:'0.75rem',color:'var(--text-muted)'}}>Over Credit Limit</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Fleet Utilization */}
                             <div className="card">
                                 <h3 style={{marginBottom:'1rem'}}>🚚 Fleet Utilization</h3>
@@ -6918,22 +7333,42 @@
                                         </div>
                                         <ProgressBar value={fleet?.trucks_used} max={fleet?.total_trucks} color="#6366f1"/>
                                     </div>
-                                    <div className="stats-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',gap:'0.75rem'}}>
+                                    <div className="stats-grid" style={{gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
                                         <div style={{textAlign:'center',padding:'0.75rem',background:'var(--bg-dark)',borderRadius:'8px'}}>
                                             <div style={{fontSize:'1.25rem',fontWeight:'700'}}>{formatNumber(fleet?.total_fleet_miles)}</div>
                                             <div style={{fontSize:'0.75rem',color:'var(--text-muted)'}}>Total Miles</div>
                                         </div>
                                         <div style={{textAlign:'center',padding:'0.75rem',background:'var(--bg-dark)',borderRadius:'8px'}}>
-                                            <div style={{fontSize:'1.25rem',fontWeight:'700'}}>{formatNumber(fleet?.total_fuel_used)}</div>
-                                            <div style={{fontSize:'0.75rem',color:'var(--text-muted)'}}>Fuel (gal)</div>
-                                        </div>
-                                        <div style={{textAlign:'center',padding:'0.75rem',background:'var(--bg-dark)',borderRadius:'8px'}}>
-                                            <div style={{fontSize:'1.25rem',fontWeight:'700'}}>{formatNumber(fleet?.avg_fleet_mpg)}</div>
+                                            <div style={{fontSize:'1.25rem',fontWeight:'700'}}>{formatNumber(fleet?.avg_mpg)}</div>
                                             <div style={{fontSize:'0.75rem',color:'var(--text-muted)'}}>Avg MPG</div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Top Products */}
+                            {top_products?.length > 0 && (
+                                <div className="card">
+                                    <h3 style={{marginBottom:'1rem'}}>📦 Top Products</h3>
+                                    <div style={{display:'grid',gap:'0.75rem'}}>
+                                        {top_products.map((product, idx) => (
+                                            <div key={product.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.5rem',background:'var(--bg-dark)',borderRadius:'8px'}}>
+                                                <div style={{width:'32px',height:'32px',borderRadius:'50%',background:'#6366f1',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'700',fontSize:'0.85rem',color:'white'}}>
+                                                    {idx + 1}
+                                                </div>
+                                                <div style={{flex:1}}>
+                                                    <div style={{fontWeight:'600'}}>{product.name}</div>
+                                                    <div style={{fontSize:'0.75rem',color:'var(--text-muted)'}}>{product.code}</div>
+                                                </div>
+                                                <div style={{textAlign:'right'}}>
+                                                    <div style={{fontWeight:'600'}}>{formatNumber(product.qty_sold)} sold</div>
+                                                    <div style={{fontSize:'0.75rem',color:'var(--success)'}}>{formatCurrency(product.revenue)}</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Top Drivers */}
                             <div className="card">
@@ -7615,6 +8050,106 @@
                 );
             };
 
+            // Render Products Report
+            const renderProductsReport = () => {
+                if (!reportData) return null;
+                const { products, by_category, daily_trend, summary, customer_assignments } = reportData;
+                return (
+                    <>
+                        {/* Summary */}
+                        <div className="stats-grid" style={{marginBottom:'1.5rem'}}>
+                            <div className="stat-card">
+                                <div className="stat-value">{summary?.total_products || 0}</div>
+                                <div className="stat-label">Active Products</div>
+                            </div>
+                            <div className="stat-card">
+                                <div className="stat-value">{formatNumber(summary?.total_qty_sold)}</div>
+                                <div className="stat-label">Items Sold</div>
+                            </div>
+                            <div className="stat-card">
+                                <div className="stat-value">{formatNumber(summary?.total_qty_collected)}</div>
+                                <div className="stat-label">Items Collected</div>
+                            </div>
+                            <div className="stat-card">
+                                <div className="stat-value">{formatCurrency(summary?.total_revenue)}</div>
+                                <div className="stat-label">Total Revenue</div>
+                            </div>
+                            <div className="stat-card">
+                                <div className="stat-value">{formatCurrency(summary?.net_deposits)}</div>
+                                <div className="stat-label">Net Deposits</div>
+                            </div>
+                        </div>
+
+                        <div className="grid-2" style={{gap:'1.5rem',marginBottom:'1.5rem'}}>
+                            {/* By Category */}
+                            <div className="card">
+                                <h3 style={{marginBottom:'1rem'}}>📂 Revenue by Category</h3>
+                                <div style={{display:'grid',gap:'0.75rem'}}>
+                                    {by_category?.map(c => (
+                                        <div key={c.category} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0.75rem',background:'var(--bg-dark)',borderRadius:'8px'}}>
+                                            <div>
+                                                <strong>{c.category || 'Uncategorized'}</strong>
+                                                <div className="text-muted" style={{fontSize:'0.8rem'}}>{c.product_count} products</div>
+                                            </div>
+                                            <div style={{textAlign:'right'}}>
+                                                <div style={{color:'var(--success)'}}>{formatCurrency(c.revenue)}</div>
+                                                <div className="text-muted" style={{fontSize:'0.8rem'}}>{formatNumber(c.qty_sold)} sold</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Daily Trend */}
+                            <div className="card">
+                                <h3 style={{marginBottom:'1rem'}}>📈 Daily Sales Trend</h3>
+                                <BarChart data={daily_trend?.slice(0,14).reverse()} labelKey="date" valueKey="revenue" color="#6366f1" height={180}/>
+                            </div>
+                        </div>
+
+                        {/* Product Details */}
+                        <div className="card">
+                            <h3 style={{marginBottom:'1rem'}}>📦 Product Performance</h3>
+                            <div style={{overflowX:'auto'}}>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Product</th>
+                                            <th>Category</th>
+                                            <th>Unit Price</th>
+                                            <th>Qty Sold</th>
+                                            <th>Qty Collected</th>
+                                            <th>Revenue</th>
+                                            <th>Deposits Net</th>
+                                            <th>Customers</th>
+                                            <th>Deliveries</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {products?.map(p => (
+                                            <tr key={p.id}>
+                                                <td>
+                                                    <strong>{p.name}</strong>
+                                                    {p.code && <><br/><small className="text-muted">{p.code}</small></>}
+                                                </td>
+                                                <td>{p.category || '—'}</td>
+                                                <td>{formatCurrency(p.price)}</td>
+                                                <td>{formatNumber(p.qty_sold)}</td>
+                                                <td>{p.is_exchangeable ? formatNumber(p.qty_collected) : '—'}</td>
+                                                <td style={{color:'var(--success)',fontWeight:'600'}}>{formatCurrency(p.revenue)}</td>
+                                                <td>{formatCurrency((parseFloat(p.deposits_collected) || 0) - (parseFloat(p.deposits_refunded) || 0))}</td>
+                                                <td>{p.unique_customers}</td>
+                                                <td>{p.delivery_count}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </>
+                );
+            };
+
             // Main render
             const currentReport = reportTypes.find(r => r.id === activeReport);
 
@@ -7685,6 +8220,7 @@
                             {activeReport === 'drivers' && renderDriverReport()}
                             {activeReport === 'trucks' && renderTruckReport()}
                             {activeReport === 'routes' && renderRouteReport()}
+                            {activeReport === 'products' && renderProductsReport()}
                             {activeReport === 'financial' && renderFinancialReport()}
                             {activeReport === 'daily' && renderDailyReport()}
                             {activeReport === 'customers' && renderCustomerReport()}
@@ -7976,7 +8512,7 @@
         // =====================================================
         // INTEGRATIONS VIEW - Fleetmatics / Telematics
         // =====================================================
-        function IntegrationsView({ data, onRefresh }) {
+        function IntegrationsContent({ data, onRefresh }) {
             const [loading, setLoading] = useState(true);
             const [fleetmaticsStatus, setFleetmaticsStatus] = useState(null);
             const [vehicles, setVehicles] = useState([]);
@@ -8084,10 +8620,8 @@
             }
 
             return (
-                <div className="content-area">
-                    <div className="content-header">
-                        <h2>🔗 Integrations</h2>
-                    </div>
+                <div>
+                    <h3 style={{marginBottom:'1rem'}}>🔗 Integrations</h3>
 
                     {error && <div className="error-message" style={{marginBottom:'1rem'}}>{error}</div>}
                     {successMsg && <div style={{background:'rgba(16,185,129,0.2)',border:'1px solid var(--success)',padding:'1rem',borderRadius:'8px',marginBottom:'1rem',color:'var(--success)'}}>{successMsg}</div>}
@@ -9280,18 +9814,18 @@
                 .info-value.large { font-size: 1.5rem; font-weight: 700; }
                 .gallon-input { width: 100%; padding: 1rem; font-size: 2rem; text-align: center; font-weight: 700; border-radius: 12px; border: 2px solid var(--border-color); background: var(--bg-input); color: var(--text-primary); }
                 .gallon-input:focus { border-color: var(--primary); outline: none; }
-                .product-row { display: flex; align-items: center; padding: 0.75rem; background: var(--bg-input); border-radius: 12px; margin-bottom: 0.5rem; }
+                .product-row { display: flex; align-items: center; padding: 0.75rem; background: var(--bg-input); border-radius: 12px; margin-bottom: 0.5rem; gap: 0.5rem; }
                 .product-info { flex: 1; min-width: 0; }
-                .product-name { font-weight: 600; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-                .product-price { font-size: 0.8rem; color: var(--text-muted); }
-                .product-qty-controls { display: flex; align-items: center; gap: 0.5rem; }
-                .qty-btn { width: 36px; height: 36px; border-radius: 8px; border: none; font-size: 1.25rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+                .product-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .product-price { font-size: 0.75rem; color: var(--text-muted); }
+                .qty-group { display: flex; flex-direction: column; align-items: center; }
+                .qty-group-label { font-size: 0.65rem; color: var(--text-muted); margin-bottom: 2px; text-transform: uppercase; }
+                .qty-controls { display: flex; align-items: center; gap: 0.25rem; }
+                .qty-btn { width: 32px; height: 32px; border-radius: 6px; border: none; font-size: 1.1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; }
                 .qty-btn.minus { background: var(--danger); color: white; }
                 .qty-btn.plus { background: var(--success); color: white; }
                 .qty-btn:disabled { opacity: 0.3; }
-                .qty-value { min-width: 32px; text-align: center; font-size: 1.1rem; font-weight: 700; }
-                .empties-section { margin-left: 0.5rem; padding-left: 0.5rem; border-left: 1px solid var(--border-color); }
-                .empties-label { font-size: 0.65rem; color: var(--text-muted); text-align: center; margin-bottom: 2px; }
+                .qty-value { min-width: 28px; text-align: center; font-size: 1rem; font-weight: 700; }
                 .totals-section { background: var(--primary); padding: 1rem; border-radius: 12px; margin-top: 1rem; }
                 .totals-row { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 0.25rem; }
                 .totals-row.total { font-size: 1.25rem; font-weight: 700; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.3); }
@@ -9367,42 +9901,45 @@
                                                                 <div className="product-name">{product.name}</div>
                                                                 <div className="product-price">
                                                                     ${parseFloat(product.effective_price || product.default_price).toFixed(2)}
-                                                                    {product.is_exchangeable && ` (+$${parseFloat(product.deposit_amount).toFixed(2)} dep)`}
+                                                                    {product.is_exchangeable && ` (+$${parseFloat(product.deposit_amount || 0).toFixed(2)} dep)`}
                                                                 </div>
                                                             </div>
                                                             
-                                                            <div className="product-qty-controls">
-                                                                <button 
-                                                                    className="qty-btn minus" 
-                                                                    onClick={() => updateProductQty(product.id, 'delivered', -1)}
-                                                                    disabled={getProductQty(product.id, 'delivered') === 0}
-                                                                >−</button>
-                                                                <div className="qty-value">{getProductQty(product.id, 'delivered')}</div>
-                                                                <button 
-                                                                    className="qty-btn plus" 
-                                                                    onClick={() => updateProductQty(product.id, 'delivered', 1)}
-                                                                >+</button>
-                                                                
-                                                                {trackEmpties && product.is_exchangeable && (
-                                                                    <div className="empties-section">
-                                                                        <div className="empties-label">Empties</div>
-                                                                        <div style={{display:'flex',alignItems:'center',gap:'0.25rem'}}>
-                                                                            <button 
-                                                                                className="qty-btn minus" 
-                                                                                style={{width:'28px',height:'28px',fontSize:'1rem'}}
-                                                                                onClick={() => updateProductQty(product.id, 'collected', -1)}
-                                                                                disabled={getProductQty(product.id, 'collected') === 0}
-                                                                            >−</button>
-                                                                            <div className="qty-value" style={{minWidth:'24px',fontSize:'0.95rem'}}>{getProductQty(product.id, 'collected')}</div>
-                                                                            <button 
-                                                                                className="qty-btn plus" 
-                                                                                style={{width:'28px',height:'28px',fontSize:'1rem'}}
-                                                                                onClick={() => updateProductQty(product.id, 'collected', 1)}
-                                                                            >+</button>
-                                                                        </div>
-                                                                    </div>
-                                                                )}
+                                                            {/* Delivered quantity */}
+                                                            <div className="qty-group">
+                                                                <div className="qty-group-label">Deliver</div>
+                                                                <div className="qty-controls">
+                                                                    <button 
+                                                                        className="qty-btn minus" 
+                                                                        onClick={() => updateProductQty(product.id, 'delivered', -1)}
+                                                                        disabled={getProductQty(product.id, 'delivered') === 0}
+                                                                    >−</button>
+                                                                    <div className="qty-value">{getProductQty(product.id, 'delivered')}</div>
+                                                                    <button 
+                                                                        className="qty-btn plus" 
+                                                                        onClick={() => updateProductQty(product.id, 'delivered', 1)}
+                                                                    >+</button>
+                                                                </div>
                                                             </div>
+                                                            
+                                                            {/* Empties/Returns - only for exchangeable products */}
+                                                            {trackEmpties && product.is_exchangeable && (
+                                                                <div className="qty-group">
+                                                                    <div className="qty-group-label">Pickup</div>
+                                                                    <div className="qty-controls">
+                                                                        <button 
+                                                                            className="qty-btn minus" 
+                                                                            onClick={() => updateProductQty(product.id, 'collected', -1)}
+                                                                            disabled={getProductQty(product.id, 'collected') === 0}
+                                                                        >−</button>
+                                                                        <div className="qty-value">{getProductQty(product.id, 'collected')}</div>
+                                                                        <button 
+                                                                            className="qty-btn plus" 
+                                                                            onClick={() => updateProductQty(product.id, 'collected', 1)}
+                                                                        >+</button>
+                                                                    </div>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     ))}
                                                 </div>

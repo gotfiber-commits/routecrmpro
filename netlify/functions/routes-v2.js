@@ -1815,12 +1815,17 @@ async function optimizeStops(companyId, event) {
         }
     }
 
-    // Fallback to local optimization with Haversine distances
+    // Fallback to local optimization with advanced algorithms
     if (optimizedStops.length === 0) {
-        
-        
         const depot = { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) };
-        const optimized = nearestNeighborOptimize(customers, depot);
+        
+        // Use advanced optimization with priority awareness, 2-opt, and or-opt
+        const priorityWeight = body.priority_weight || 0.25; // Balance between distance and urgency
+        const optimized = optimizeRouteAdvanced(customers, depot, {
+            priorityWeight,
+            use2Opt: true,
+            useOrOpt: customers.length >= 4
+        });
         
         let prevLat = depot.lat;
         let prevLng = depot.lng;
@@ -1833,6 +1838,10 @@ async function optimizeStops(companyId, event) {
             totalMiles += dist;
             totalDriveMinutes += timeMin;
             
+            // Calculate urgency for this stop
+            const urgency = calculateUrgency(cust);
+            const urgencyLevel = urgency > 80 ? 'critical' : urgency > 50 ? 'high' : urgency > 30 ? 'medium' : 'low';
+            
             optimizedStops.push({
                 customer_id: cust.id,
                 customer_name: cust.name,
@@ -1843,6 +1852,8 @@ async function optimizeStops(companyId, event) {
                 lng: parseFloat(cust.lng),
                 tank_size: cust.tank_size,
                 current_level: cust.current_level,
+                urgency_score: Math.round(urgency),
+                urgency_level: urgencyLevel,
                 stop_number: i + 1,
                 distance_from_previous: Math.round(dist * 10) / 10,
                 time_from_previous_minutes: Math.round(timeMin)
@@ -1857,12 +1868,21 @@ async function optimizeStops(companyId, event) {
         totalMiles += returnDist;
         totalDriveMinutes += (returnDist / 35) * 60;
         
-        method = 'haversine';
+        method = 'advanced_local';
+        console.log(`Advanced optimization: ${customers.length} stops, ${totalMiles.toFixed(1)} miles (priority_weight: ${priorityWeight})`);
     }
 
     // Estimate stop time (default 15 min per stop)
     const stopTimeMinutes = optimizedStops.length * 15;
     const totalTimeMinutes = totalDriveMinutes + stopTimeMinutes;
+
+    // Count priority levels
+    const priorityStats = {
+        critical: optimizedStops.filter(s => s.urgency_level === 'critical').length,
+        high: optimizedStops.filter(s => s.urgency_level === 'high').length,
+        medium: optimizedStops.filter(s => s.urgency_level === 'medium').length,
+        low: optimizedStops.filter(s => s.urgency_level === 'low').length
+    };
 
     return success({
         optimization_method: method,
@@ -1873,7 +1893,8 @@ async function optimizeStops(companyId, event) {
             total_miles: Math.round(totalMiles * 10) / 10,
             estimated_drive_time_minutes: Math.round(totalDriveMinutes),
             estimated_stop_time_minutes: stopTimeMinutes,
-            estimated_total_time_minutes: Math.round(totalTimeMinutes)
+            estimated_total_time_minutes: Math.round(totalTimeMinutes),
+            priority_stops: priorityStats
         },
         distribution_center: {
             id: dc.id,
@@ -1901,33 +1922,235 @@ function toRad(deg) {
     return deg * (Math.PI / 180);
 }
 
-// Nearest Neighbor optimization
-function nearestNeighborOptimize(customers, depot) {
-    const unvisited = [...customers];
+// Calculate urgency score for a customer (higher = more urgent)
+function calculateUrgency(customer) {
+    const level = parseFloat(customer.current_level) || 50;
+    const tankSize = parseFloat(customer.tank_size) || 500;
+    
+    // Base urgency from tank level (0-100 scale, inverted)
+    let urgency = 100 - level;
+    
+    // Critical urgency boost for very low tanks
+    if (level <= 10) urgency += 50;
+    else if (level <= 20) urgency += 30;
+    else if (level <= 30) urgency += 15;
+    
+    // Larger tanks = more urgent (they use more)
+    if (tankSize >= 1000) urgency += 10;
+    else if (tankSize >= 500) urgency += 5;
+    
+    return urgency;
+}
+
+// Build distance matrix for a set of locations
+function buildDistanceMatrix(locations) {
+    const n = locations.length;
+    const matrix = [];
+    for (let i = 0; i < n; i++) {
+        matrix[i] = [];
+        for (let j = 0; j < n; j++) {
+            if (i === j) {
+                matrix[i][j] = 0;
+            } else {
+                matrix[i][j] = haversineDistance(
+                    locations[i].lat, locations[i].lng,
+                    locations[j].lat, locations[j].lng
+                );
+            }
+        }
+    }
+    return matrix;
+}
+
+// Calculate total route distance
+function calculateRouteDistance(route, matrix) {
+    let total = 0;
+    for (let i = 0; i < route.length - 1; i++) {
+        total += matrix[route[i]][route[i + 1]];
+    }
+    return total;
+}
+
+// 2-opt improvement - reverses segments to reduce crossings
+function twoOptImprove(route, matrix, maxIterations = 500) {
+    let improved = true;
+    let iterations = 0;
+    let bestRoute = [...route];
+    
+    while (improved && iterations < maxIterations) {
+        improved = false;
+        iterations++;
+        
+        for (let i = 1; i < bestRoute.length - 2; i++) {
+            for (let j = i + 1; j < bestRoute.length - 1; j++) {
+                // Calculate improvement from reversing segment [i, j]
+                const a = bestRoute[i - 1];
+                const b = bestRoute[i];
+                const c = bestRoute[j];
+                const d = bestRoute[j + 1];
+                
+                const currentDist = matrix[a][b] + matrix[c][d];
+                const newDist = matrix[a][c] + matrix[b][d];
+                
+                if (newDist < currentDist - 0.01) {
+                    // Reverse the segment
+                    const newRoute = bestRoute.slice(0, i);
+                    const reversed = bestRoute.slice(i, j + 1).reverse();
+                    const rest = bestRoute.slice(j + 1);
+                    bestRoute = [...newRoute, ...reversed, ...rest];
+                    improved = true;
+                }
+            }
+        }
+    }
+    
+    return bestRoute;
+}
+
+// Or-opt improvement - moves sequences of 1-3 stops to better positions
+function orOptImprove(route, matrix) {
+    let improved = true;
+    let bestRoute = [...route];
+    
+    while (improved) {
+        improved = false;
+        
+        // Try moving sequences of 1, 2, or 3 consecutive stops
+        for (let seqLen = 1; seqLen <= 3; seqLen++) {
+            for (let i = 1; i < bestRoute.length - seqLen - 1; i++) {
+                for (let j = 1; j < bestRoute.length - 1; j++) {
+                    if (j >= i - 1 && j <= i + seqLen) continue; // Skip overlapping positions
+                    
+                    // Calculate current cost of sequence at position i
+                    const before = bestRoute[i - 1];
+                    const seqStart = bestRoute[i];
+                    const seqEnd = bestRoute[i + seqLen - 1];
+                    const after = bestRoute[i + seqLen];
+                    
+                    const currentCost = matrix[before][seqStart] + matrix[seqEnd][after];
+                    
+                    // Calculate new cost if sequence moved to position j
+                    const insertBefore = bestRoute[j];
+                    const insertAfter = bestRoute[j + 1];
+                    
+                    // Cost to remove sequence
+                    const removeCost = -currentCost + matrix[before][after];
+                    
+                    // Cost to insert sequence
+                    const insertCost = matrix[insertBefore][seqStart] + matrix[seqEnd][insertAfter] - matrix[insertBefore][insertAfter];
+                    
+                    if (removeCost + insertCost < -0.01) {
+                        // Move the sequence
+                        const seq = bestRoute.splice(i, seqLen);
+                        const newJ = j > i ? j - seqLen : j;
+                        bestRoute.splice(newJ + 1, 0, ...seq);
+                        improved = true;
+                        break;
+                    }
+                }
+                if (improved) break;
+            }
+            if (improved) break;
+        }
+    }
+    
+    return bestRoute;
+}
+
+// Nearest Neighbor with priority awareness
+function nearestNeighborWithPriority(customers, depot, priorityWeight = 0.3) {
+    const unvisited = customers.map((c, idx) => ({
+        ...c,
+        idx,
+        lat: parseFloat(c.lat),
+        lng: parseFloat(c.lng),
+        urgency: calculateUrgency(c)
+    }));
+    
     const route = [];
     let current = { lat: depot.lat, lng: depot.lng };
+    
+    // Find max distance for normalization
+    let maxDist = 0;
+    for (const c of unvisited) {
+        const d = haversineDistance(current.lat, current.lng, c.lat, c.lng);
+        if (d > maxDist) maxDist = d;
+    }
+    maxDist = maxDist || 1;
 
     while (unvisited.length > 0) {
-        let nearestIdx = 0;
-        let nearestDist = Infinity;
+        let bestIdx = 0;
+        let bestScore = Infinity;
 
         for (let i = 0; i < unvisited.length; i++) {
-            const dist = haversineDistance(
-                current.lat, current.lng,
-                parseFloat(unvisited[i].lat), parseFloat(unvisited[i].lng)
-            );
-            if (dist < nearestDist) {
-                nearestDist = dist;
-                nearestIdx = i;
+            const c = unvisited[i];
+            const dist = haversineDistance(current.lat, current.lng, c.lat, c.lng);
+            
+            // Normalized distance (0-1)
+            const normalizedDist = dist / maxDist;
+            
+            // Normalized urgency (0-1, inverted so high urgency = low score)
+            const normalizedUrgency = 1 - (c.urgency / 150);
+            
+            // Combined score (lower is better)
+            // priorityWeight controls balance between distance and urgency
+            const score = (1 - priorityWeight) * normalizedDist + priorityWeight * normalizedUrgency;
+            
+            if (score < bestScore) {
+                bestScore = score;
+                bestIdx = i;
             }
         }
 
-        const nearest = unvisited.splice(nearestIdx, 1)[0];
-        route.push(nearest);
-        current = { lat: parseFloat(nearest.lat), lng: parseFloat(nearest.lng) };
+        const best = unvisited.splice(bestIdx, 1)[0];
+        route.push(best);
+        current = { lat: best.lat, lng: best.lng };
     }
 
     return route;
+}
+
+// Full optimization pipeline
+function optimizeRouteAdvanced(customers, depot, options = {}) {
+    const { priorityWeight = 0.3, use2Opt = true, useOrOpt = true } = options;
+    
+    if (customers.length === 0) return [];
+    if (customers.length === 1) return [customers[0]];
+    
+    // Step 1: Build initial route with priority-aware nearest neighbor
+    let route = nearestNeighborWithPriority(customers, depot, priorityWeight);
+    
+    if (route.length < 3) return route;
+    
+    // Step 2: Build distance matrix for improvements
+    const locations = [depot, ...route.map(c => ({ lat: parseFloat(c.lat), lng: parseFloat(c.lng) }))];
+    const matrix = buildDistanceMatrix(locations);
+    
+    // Convert route to indices (0 = depot, 1..n = customers)
+    let routeIndices = [0, ...route.map((_, i) => i + 1), 0]; // Start and end at depot
+    
+    // Step 3: Apply 2-opt improvement
+    if (use2Opt) {
+        routeIndices = twoOptImprove(routeIndices, matrix);
+    }
+    
+    // Step 4: Apply Or-opt improvement
+    if (useOrOpt && route.length >= 4) {
+        routeIndices = orOptImprove(routeIndices, matrix);
+    }
+    
+    // Convert back to customer objects (remove depot indices)
+    const optimizedRoute = routeIndices
+        .filter(i => i !== 0)
+        .map(i => route[i - 1]);
+    
+    return optimizedRoute;
+}
+
+// Legacy: Nearest Neighbor optimization (kept for compatibility)
+function nearestNeighborOptimize(customers, depot) {
+    // Use the advanced optimizer with default settings
+    return optimizeRouteAdvanced(customers, depot, { priorityWeight: 0.2 });
 }
 
 // Nearest Neighbor that returns indices (for re-optimization)

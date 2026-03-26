@@ -61,6 +61,11 @@ exports.handler = async (event, context) => {
             return await getDailyReport(companyId, startDate, endDate, user);
         }
 
+        // GET /reports/products - Product sales report
+        if (method === 'GET' && path === '/products') {
+            return await getProductsReport(companyId, startDate, endDate, user);
+        }
+
         // GET /reports/export/:type - Export report as CSV
         if (method === 'GET' && path.startsWith('/export/')) {
             const reportType = path.replace('/export/', '');
@@ -108,6 +113,33 @@ async function getDashboardReport(companyId, startDate, endDate, user) {
         ${dcFilter}
     `, baseParams);
 
+    // Product delivery stats (from delivery_items)
+    const productStats = await query(`
+        SELECT 
+            COALESCE(SUM(di.qty_delivered), 0) as total_items_delivered,
+            COALESCE(SUM(di.qty_collected), 0) as total_items_collected,
+            COALESCE(SUM(di.line_total), 0) as total_product_revenue,
+            COALESCE(SUM(di.deposit_collected), 0) as total_deposits_collected,
+            COALESCE(SUM(di.deposit_refunded), 0) as total_deposits_refunded,
+            COUNT(DISTINCT di.product_id) as unique_products_sold
+        FROM delivery_items di
+        JOIN route_run_stops rrs ON di.route_run_stop_id = rrs.id
+        JOIN route_runs rr ON rrs.run_id = rr.id
+        WHERE rr.company_id = $1 
+        AND rr.scheduled_date BETWEEN $2 AND $3
+        ${dcFilter}
+    `, baseParams);
+
+    // Customer account summary
+    const accountStats = await query(`
+        SELECT 
+            COALESCE(SUM(account_balance), 0) as total_outstanding,
+            COUNT(*) FILTER (WHERE account_balance > 0) as customers_with_balance,
+            COUNT(*) FILTER (WHERE account_balance > credit_limit AND credit_limit > 0) as over_credit_limit
+        FROM customers
+        WHERE company_id = $1 AND status = 'active'
+    `, [companyId]);
+
     // Delivery completion rate
     const completionRate = await query(`
         SELECT 
@@ -154,6 +186,23 @@ async function getDashboardReport(companyId, startDate, endDate, user) {
         WHERE t.company_id = $1 AND t.status = 'active'
     `, [companyId, startDate, endDate]);
 
+    // Top products sold
+    const topProducts = await query(`
+        SELECT 
+            p.id, p.name, p.code,
+            COALESCE(SUM(di.qty_delivered), 0) as qty_sold,
+            COALESCE(SUM(di.line_total), 0) as revenue
+        FROM products p
+        LEFT JOIN delivery_items di ON p.id = di.product_id
+        LEFT JOIN route_run_stops rrs ON di.route_run_stop_id = rrs.id
+        LEFT JOIN route_runs rr ON rrs.run_id = rr.id 
+            AND rr.scheduled_date BETWEEN $2 AND $3
+        WHERE p.company_id = $1 AND p.status = 'active'
+        GROUP BY p.id, p.name, p.code
+        ORDER BY revenue DESC
+        LIMIT 5
+    `, [companyId, startDate, endDate]);
+
     // Daily trend
     const dailyTrend = await query(`
         SELECT 
@@ -172,6 +221,8 @@ async function getDashboardReport(companyId, startDate, endDate, user) {
     `, baseParams);
 
     const stats = routeStats.rows[0];
+    const products = productStats.rows[0] || {};
+    const accounts = accountStats.rows[0] || {};
     const completion = completionRate.rows[0];
     const trucks = truckStats.rows[0];
 
@@ -199,16 +250,30 @@ async function getDashboardReport(companyId, startDate, endDate, user) {
             revenue_per_gallon: stats.total_gallons > 0 ? (stats.total_revenue / stats.total_gallons).toFixed(2) : 0,
             cost_per_mile: stats.total_miles > 0 ? (stats.total_cost / stats.total_miles).toFixed(2) : 0
         },
+        product_metrics: {
+            total_items_delivered: parseInt(products.total_items_delivered) || 0,
+            total_items_collected: parseInt(products.total_items_collected) || 0,
+            total_product_revenue: parseFloat(products.total_product_revenue) || 0,
+            total_deposits_collected: parseFloat(products.total_deposits_collected) || 0,
+            total_deposits_refunded: parseFloat(products.total_deposits_refunded) || 0,
+            net_deposits: (parseFloat(products.total_deposits_collected) || 0) - (parseFloat(products.total_deposits_refunded) || 0),
+            unique_products_sold: parseInt(products.unique_products_sold) || 0
+        },
+        accounts_receivable: {
+            total_outstanding: parseFloat(accounts.total_outstanding) || 0,
+            customers_with_balance: parseInt(accounts.customers_with_balance) || 0,
+            over_credit_limit: parseInt(accounts.over_credit_limit) || 0
+        },
         fleet: {
             total_trucks: parseInt(trucks.total_trucks) || 0,
             trucks_used: parseInt(trucks.trucks_used) || 0,
-            utilization_rate: trucks.total_trucks > 0 ? ((trucks.trucks_used / trucks.total_trucks) * 100).toFixed(1) : 0,
+            utilization: trucks.total_trucks > 0 ? ((trucks.trucks_used / trucks.total_trucks) * 100).toFixed(1) : 0,
             total_fleet_miles: parseFloat(trucks.total_fleet_miles) || 0,
-            total_fuel_used: parseFloat(trucks.total_fuel_used) || 0,
-            avg_fleet_mpg: parseFloat(trucks.avg_fleet_mpg) || 0
+            avg_mpg: parseFloat(trucks.avg_fleet_mpg) || 0
         },
         top_drivers: topDrivers.rows,
-        daily_trend: dailyTrend.rows.reverse()
+        top_products: topProducts.rows,
+        daily_trend: dailyTrend.rows
     });
 }
 
@@ -289,7 +354,7 @@ async function getDriverReport(companyId, startDate, endDate, user) {
 
     const drivers = await query(`
         SELECT 
-            d.id, d.code, d.name, d.phone, d.hire_date, d.hourly_rate, d.cdl_class, d.hazmat_certified,
+            d.id, d.code, d.name, d.phone, d.hire_date, d.cdl_class, d.hazmat_certified,
             dc.name as dc_name,
             COUNT(DISTINCT rr.id) as routes_assigned,
             COUNT(DISTINCT rr.id) FILTER (WHERE rr.status = 'completed') as routes_completed,
@@ -310,9 +375,33 @@ async function getDriverReport(companyId, startDate, endDate, user) {
         LEFT JOIN distribution_centers dc ON d.dc_id = dc.id
         LEFT JOIN route_runs rr ON d.id = rr.driver_id AND rr.scheduled_date BETWEEN $2 AND $3
         WHERE d.company_id = $1 AND d.status = 'active' ${dcFilter}
-        GROUP BY d.id, d.code, d.name, d.phone, d.hire_date, d.hourly_rate, d.cdl_class, d.hazmat_certified, dc.name
+        GROUP BY d.id, d.code, d.name, d.phone, d.hire_date, d.cdl_class, d.hazmat_certified, dc.name
         ORDER BY total_revenue DESC
     `, params);
+
+    // Get items delivered per driver
+    const driverItems = await query(`
+        SELECT 
+            d.id as driver_id,
+            COALESCE(SUM(di.qty_delivered), 0) as items_delivered,
+            COALESCE(SUM(di.qty_collected), 0) as items_collected,
+            COALESCE(SUM(di.line_total), 0) as product_revenue
+        FROM drivers d
+        LEFT JOIN route_runs rr ON d.id = rr.driver_id AND rr.scheduled_date BETWEEN $2 AND $3
+        LEFT JOIN route_run_stops rrs ON rr.id = rrs.run_id
+        LEFT JOIN delivery_items di ON rrs.id = di.route_run_stop_id
+        WHERE d.company_id = $1 AND d.status = 'active' ${dcFilter}
+        GROUP BY d.id
+    `, params);
+
+    const itemsLookup = {};
+    driverItems.rows.forEach(r => { 
+        itemsLookup[r.driver_id] = {
+            items_delivered: parseInt(r.items_delivered) || 0,
+            items_collected: parseInt(r.items_collected) || 0,
+            product_revenue: parseFloat(r.product_revenue) || 0
+        };
+    });
 
     const skipRates = await query(`
         SELECT d.id as driver_id, COUNT(*) FILTER (WHERE rrs.status = 'skipped') as skipped, COUNT(*) as total
@@ -323,7 +412,13 @@ async function getDriverReport(companyId, startDate, endDate, user) {
     const skipLookup = {};
     skipRates.rows.forEach(r => { skipLookup[r.driver_id] = r.total > 0 ? ((r.skipped / r.total) * 100).toFixed(1) : 0; });
 
-    const driversWithSkip = drivers.rows.map(d => ({ ...d, skip_rate: skipLookup[d.id] || 0 }));
+    const driversWithExtras = drivers.rows.map(d => ({ 
+        ...d, 
+        skip_rate: skipLookup[d.id] || 0,
+        items_delivered: itemsLookup[d.id]?.items_delivered || 0,
+        items_collected: itemsLookup[d.id]?.items_collected || 0,
+        product_revenue: itemsLookup[d.id]?.product_revenue || 0
+    }));
 
     const teamTotals = await query(`
         SELECT COUNT(DISTINCT d.id) as total_drivers,
@@ -336,11 +431,27 @@ async function getDriverReport(companyId, startDate, endDate, user) {
         WHERE d.company_id = $1 AND d.status = 'active' ${dcFilter}
     `, params);
 
+    // Team items totals
+    const teamItems = await query(`
+        SELECT 
+            COALESCE(SUM(di.qty_delivered), 0) as team_items_delivered,
+            COALESCE(SUM(di.qty_collected), 0) as team_items_collected
+        FROM drivers d
+        LEFT JOIN route_runs rr ON d.id = rr.driver_id AND rr.scheduled_date BETWEEN $2 AND $3
+        LEFT JOIN route_run_stops rrs ON rr.id = rrs.run_id
+        LEFT JOIN delivery_items di ON rrs.id = di.route_run_stop_id
+        WHERE d.company_id = $1 AND d.status = 'active' ${dcFilter}
+    `, params);
+
     return success({
         period: { start_date: startDate, end_date: endDate },
-        drivers: driversWithSkip,
-        team_totals: teamTotals.rows[0],
-        total_drivers: driversWithSkip.length
+        drivers: driversWithExtras,
+        team_totals: {
+            ...teamTotals.rows[0],
+            team_items_delivered: parseInt(teamItems.rows[0]?.team_items_delivered) || 0,
+            team_items_collected: parseInt(teamItems.rows[0]?.team_items_collected) || 0
+        },
+        total_drivers: driversWithExtras.length
     });
 }
 
@@ -419,10 +530,13 @@ async function getCustomerReport(companyId, startDate, endDate, user) {
         params.push(user.dcId);
     }
 
+    // Customer delivery data with account info
     const customers = await query(`
         SELECT 
             c.id, c.code, c.name, c.address, c.city, c.state,
             c.tank_size, c.current_level, c.price_per_gallon, c.auto_delivery, c.customer_type,
+            c.account_balance, c.credit_limit, c.payment_terms,
+            c.last_delivery_date, c.last_payment_date, c.last_payment_amount,
             dc.name as dc_name,
             COUNT(DISTINCT rrs.id) as total_deliveries,
             COUNT(DISTINCT rrs.id) FILTER (WHERE rrs.status = 'completed') as completed_deliveries,
@@ -430,20 +544,44 @@ async function getCustomerReport(companyId, startDate, endDate, user) {
             COALESCE(SUM(rrs.gallons_delivered), 0) as total_gallons,
             COALESCE(SUM(rrs.delivery_total), 0) as total_spent,
             COALESCE(AVG(rrs.gallons_delivered) FILTER (WHERE rrs.gallons_delivered > 0), 0) as avg_gallons_per_delivery,
-            MAX(rr.scheduled_date) as last_delivery_date
+            MAX(rr.scheduled_date) as last_delivery_in_period
         FROM customers c
         LEFT JOIN distribution_centers dc ON c.preferred_dc_id = dc.id
         LEFT JOIN route_run_stops rrs ON c.id = rrs.customer_id
         LEFT JOIN route_runs rr ON rrs.run_id = rr.id AND rr.scheduled_date BETWEEN $2 AND $3
         WHERE c.company_id = $1 AND c.status = 'active' ${dcFilter}
-        GROUP BY c.id, c.code, c.name, c.address, c.city, c.state, c.tank_size, c.current_level, c.price_per_gallon, c.auto_delivery, c.customer_type, dc.name
+        GROUP BY c.id, c.code, c.name, c.address, c.city, c.state, c.tank_size, c.current_level, 
+                 c.price_per_gallon, c.auto_delivery, c.customer_type, c.account_balance, 
+                 c.credit_limit, c.payment_terms, c.last_delivery_date, c.last_payment_date, 
+                 c.last_payment_amount, dc.name
         ORDER BY total_spent DESC
+    `, params);
+
+    // Product delivery by customer
+    const customerProducts = await query(`
+        SELECT 
+            c.id as customer_id, c.code as customer_code, c.name as customer_name,
+            p.id as product_id, p.name as product_name, p.code as product_code,
+            COALESCE(SUM(di.qty_delivered), 0) as qty_delivered,
+            COALESCE(SUM(di.qty_collected), 0) as qty_collected,
+            COALESCE(SUM(di.line_total), 0) as revenue,
+            COALESCE(SUM(di.deposit_collected - di.deposit_refunded), 0) as net_deposits
+        FROM customers c
+        JOIN route_run_stops rrs ON c.id = rrs.customer_id
+        JOIN route_runs rr ON rrs.run_id = rr.id AND rr.scheduled_date BETWEEN $2 AND $3
+        JOIN delivery_items di ON rrs.id = di.route_run_stop_id
+        JOIN products p ON di.product_id = p.id
+        WHERE c.company_id = $1 AND c.status = 'active' ${dcFilter}
+        GROUP BY c.id, c.code, c.name, p.id, p.name, p.code
+        ORDER BY revenue DESC
+        LIMIT 100
     `, params);
 
     const byType = await query(`
         SELECT c.customer_type, COUNT(DISTINCT c.id) as customer_count,
             COALESCE(SUM(rrs.gallons_delivered), 0) as total_gallons,
-            COALESCE(SUM(rrs.delivery_total), 0) as total_revenue
+            COALESCE(SUM(rrs.delivery_total), 0) as total_revenue,
+            COALESCE(SUM(c.account_balance), 0) as total_balance
         FROM customers c
         LEFT JOIN route_run_stops rrs ON c.id = rrs.customer_id
         LEFT JOIN route_runs rr ON rrs.run_id = rr.id AND rr.scheduled_date BETWEEN $2 AND $3
@@ -453,9 +591,21 @@ async function getCustomerReport(companyId, startDate, endDate, user) {
 
     const lowTank = await query(`
         SELECT c.id, c.code, c.name, c.address, c.city, c.tank_size, c.current_level,
-            ROUND((c.tank_size * (1 - c.current_level / 100.0))) as gallons_needed
+            ROUND((c.tank_size * (1 - c.current_level / 100.0))) as gallons_needed,
+            c.account_balance
         FROM customers c WHERE c.company_id = $1 AND c.status = 'active' AND c.current_level <= 30 ${dcFilter}
         ORDER BY c.current_level ASC LIMIT 20
+    `, params);
+
+    // Customers with outstanding balances
+    const outstandingBalances = await query(`
+        SELECT c.id, c.code, c.name, c.account_balance, c.credit_limit, c.payment_terms,
+            c.last_payment_date, c.last_delivery_date,
+            CASE WHEN c.credit_limit > 0 AND c.account_balance > c.credit_limit THEN true ELSE false END as over_limit
+        FROM customers c
+        WHERE c.company_id = $1 AND c.status = 'active' AND c.account_balance > 0 ${dcFilter}
+        ORDER BY c.account_balance DESC
+        LIMIT 20
     `, params);
 
     const summary = await query(`
@@ -463,7 +613,9 @@ async function getCustomerReport(companyId, startDate, endDate, user) {
             COUNT(DISTINCT c.id) FILTER (WHERE c.auto_delivery = true) as auto_delivery_customers,
             COALESCE(SUM(rrs.gallons_delivered), 0) as total_gallons_delivered,
             COALESCE(SUM(rrs.delivery_total), 0) as total_revenue,
-            COUNT(DISTINCT rrs.id) as total_deliveries
+            COUNT(DISTINCT rrs.id) as total_deliveries,
+            COALESCE(SUM(c.account_balance), 0) as total_outstanding,
+            COUNT(DISTINCT c.id) FILTER (WHERE c.account_balance > 0) as customers_with_balance
         FROM customers c
         LEFT JOIN route_run_stops rrs ON c.id = rrs.customer_id
         LEFT JOIN route_runs rr ON rrs.run_id = rr.id AND rr.scheduled_date BETWEEN $2 AND $3
@@ -473,8 +625,10 @@ async function getCustomerReport(companyId, startDate, endDate, user) {
     return success({
         period: { start_date: startDate, end_date: endDate },
         customers: customers.rows.slice(0, 100),
+        customer_products: customerProducts.rows,
         by_customer_type: byType.rows,
         low_tank_alerts: lowTank.rows,
+        outstanding_balances: outstandingBalances.rows,
         summary: summary.rows[0],
         total_customers: customers.rows.length
     });
@@ -499,6 +653,67 @@ async function getFinancialReport(companyId, startDate, endDate, user) {
         FROM route_runs rr WHERE rr.company_id = $1 AND rr.scheduled_date BETWEEN $2 AND $3 ${dcFilter}
     `, params);
 
+    // Product revenue breakdown
+    const productRevenue = await query(`
+        SELECT 
+            p.id, p.name, p.code, p.category,
+            COALESCE(SUM(di.qty_delivered), 0) as qty_sold,
+            COALESCE(SUM(di.qty_collected), 0) as qty_collected,
+            COALESCE(SUM(di.line_total), 0) as revenue,
+            COALESCE(SUM(di.deposit_collected), 0) as deposits_collected,
+            COALESCE(SUM(di.deposit_refunded), 0) as deposits_refunded
+        FROM products p
+        LEFT JOIN delivery_items di ON p.id = di.product_id
+        LEFT JOIN route_run_stops rrs ON di.route_run_stop_id = rrs.id
+        LEFT JOIN route_runs rr ON rrs.run_id = rr.id 
+            AND rr.scheduled_date BETWEEN $2 AND $3
+            ${dcFilter}
+        WHERE p.company_id = $1 AND p.status = 'active'
+        GROUP BY p.id, p.name, p.code, p.category
+        ORDER BY revenue DESC
+    `, params);
+
+    // Revenue by category
+    const byCategory = await query(`
+        SELECT 
+            COALESCE(p.category, 'Uncategorized') as category,
+            COALESCE(SUM(di.qty_delivered), 0) as qty_sold,
+            COALESCE(SUM(di.line_total), 0) as revenue
+        FROM products p
+        LEFT JOIN delivery_items di ON p.id = di.product_id
+        LEFT JOIN route_run_stops rrs ON di.route_run_stop_id = rrs.id
+        LEFT JOIN route_runs rr ON rrs.run_id = rr.id 
+            AND rr.scheduled_date BETWEEN $2 AND $3
+            ${dcFilter}
+        WHERE p.company_id = $1 AND p.status = 'active'
+        GROUP BY p.category
+        ORDER BY revenue DESC
+    `, params);
+
+    // Customer transactions (payments received)
+    const paymentsReceived = await query(`
+        SELECT 
+            COALESCE(SUM(ABS(amount)), 0) as total_payments,
+            COUNT(*) as payment_count
+        FROM customer_transactions
+        WHERE company_id = $1 
+        AND transaction_type = 'payment'
+        AND transaction_date BETWEEN $2 AND $3
+    `, [companyId, startDate, endDate]);
+
+    // Accounts receivable summary
+    const arSummary = await query(`
+        SELECT 
+            COALESCE(SUM(account_balance), 0) as total_outstanding,
+            COUNT(*) FILTER (WHERE account_balance > 0) as customers_with_balance,
+            COALESCE(SUM(account_balance) FILTER (WHERE payment_terms = 'cod'), 0) as cod_outstanding,
+            COALESCE(SUM(account_balance) FILTER (WHERE payment_terms = 'net15'), 0) as net15_outstanding,
+            COALESCE(SUM(account_balance) FILTER (WHERE payment_terms = 'net30'), 0) as net30_outstanding,
+            COALESCE(SUM(account_balance) FILTER (WHERE payment_terms = 'net60'), 0) as net60_outstanding
+        FROM customers
+        WHERE company_id = $1 AND status = 'active'
+    `, [companyId]);
+
     const dailyRevenue = await query(`
         SELECT rr.scheduled_date::date as date, COALESCE(SUM(total_revenue), 0) as revenue,
             COALESCE(SUM(estimated_total_cost), 0) as cost, COALESCE(SUM(total_gallons_delivered), 0) as gallons
@@ -514,6 +729,8 @@ async function getFinancialReport(companyId, startDate, endDate, user) {
     `, [companyId, startDate, endDate]);
 
     const fin = financial.rows[0];
+    const payments = paymentsReceived.rows[0] || {};
+    const ar = arSummary.rows[0] || {};
     const revenue = parseFloat(fin.total_revenue) || 0;
     const cost = parseFloat(fin.total_cost) || 0;
     const gallons = parseFloat(fin.total_gallons) || 0;
@@ -534,6 +751,22 @@ async function getFinancialReport(companyId, startDate, endDate, user) {
         cost_breakdown: {
             fuel: parseFloat(fin.fuel_cost) || 0, fuel_percentage: cost > 0 ? ((fin.fuel_cost / cost) * 100).toFixed(1) : 0,
             labor: parseFloat(fin.labor_cost) || 0, labor_percentage: cost > 0 ? ((fin.labor_cost / cost) * 100).toFixed(1) : 0
+        },
+        product_revenue: productRevenue.rows,
+        revenue_by_category: byCategory.rows,
+        payments: {
+            total_received: parseFloat(payments.total_payments) || 0,
+            payment_count: parseInt(payments.payment_count) || 0
+        },
+        accounts_receivable: {
+            total_outstanding: parseFloat(ar.total_outstanding) || 0,
+            customers_with_balance: parseInt(ar.customers_with_balance) || 0,
+            by_terms: {
+                cod: parseFloat(ar.cod_outstanding) || 0,
+                net15: parseFloat(ar.net15_outstanding) || 0,
+                net30: parseFloat(ar.net30_outstanding) || 0,
+                net60: parseFloat(ar.net60_outstanding) || 0
+            }
         },
         daily_trend: dailyRevenue.rows,
         by_distribution_center: byDC.rows
@@ -563,16 +796,48 @@ async function getDailyReport(companyId, startDate, endDate, user) {
         GROUP BY rr.scheduled_date::date ORDER BY date DESC
     `, params);
 
-    const totals = daily.rows.reduce((acc, day) => ({
+    // Daily product items delivered
+    const dailyItems = await query(`
+        SELECT rr.scheduled_date::date as date,
+            COALESCE(SUM(di.qty_delivered), 0) as items_delivered,
+            COALESCE(SUM(di.qty_collected), 0) as items_collected,
+            COALESCE(SUM(di.line_total), 0) as product_revenue
+        FROM route_runs rr
+        JOIN route_run_stops rrs ON rr.id = rrs.run_id
+        JOIN delivery_items di ON rrs.id = di.route_run_stop_id
+        WHERE rr.company_id = $1 AND rr.scheduled_date BETWEEN $2 AND $3 ${dcFilter}
+        GROUP BY rr.scheduled_date::date
+    `, params);
+
+    // Merge daily items into daily data
+    const itemsLookup = {};
+    dailyItems.rows.forEach(r => { 
+        itemsLookup[r.date] = {
+            items_delivered: parseInt(r.items_delivered) || 0,
+            items_collected: parseInt(r.items_collected) || 0,
+            product_revenue: parseFloat(r.product_revenue) || 0
+        };
+    });
+
+    const dailyWithItems = daily.rows.map(d => ({
+        ...d,
+        items_delivered: itemsLookup[d.date]?.items_delivered || 0,
+        items_collected: itemsLookup[d.date]?.items_collected || 0,
+        product_revenue: itemsLookup[d.date]?.product_revenue || 0
+    }));
+
+    const totals = dailyWithItems.reduce((acc, day) => ({
         routes: acc.routes + parseInt(day.routes), completed_routes: acc.completed_routes + parseInt(day.completed_routes),
         stops_completed: acc.stops_completed + parseInt(day.stops_completed),
         total_miles: acc.total_miles + parseFloat(day.total_miles), total_gallons: acc.total_gallons + parseFloat(day.total_gallons),
-        total_revenue: acc.total_revenue + parseFloat(day.total_revenue), total_cost: acc.total_cost + parseFloat(day.total_cost)
-    }), { routes: 0, completed_routes: 0, stops_completed: 0, total_miles: 0, total_gallons: 0, total_revenue: 0, total_cost: 0 });
+        total_revenue: acc.total_revenue + parseFloat(day.total_revenue), total_cost: acc.total_cost + parseFloat(day.total_cost),
+        items_delivered: acc.items_delivered + (day.items_delivered || 0),
+        items_collected: acc.items_collected + (day.items_collected || 0)
+    }), { routes: 0, completed_routes: 0, stops_completed: 0, total_miles: 0, total_gallons: 0, total_revenue: 0, total_cost: 0, items_delivered: 0, items_collected: 0 });
 
     return success({
         period: { start_date: startDate, end_date: endDate },
-        daily: daily.rows,
+        daily: dailyWithItems,
         totals: totals,
         days_count: daily.rows.length,
         averages: {
@@ -580,7 +845,150 @@ async function getDailyReport(companyId, startDate, endDate, user) {
             stops_per_day: daily.rows.length > 0 ? (totals.stops_completed / daily.rows.length).toFixed(1) : 0,
             miles_per_day: daily.rows.length > 0 ? (totals.total_miles / daily.rows.length).toFixed(1) : 0,
             gallons_per_day: daily.rows.length > 0 ? (totals.total_gallons / daily.rows.length).toFixed(1) : 0,
-            revenue_per_day: daily.rows.length > 0 ? (totals.total_revenue / daily.rows.length).toFixed(2) : 0
+            revenue_per_day: daily.rows.length > 0 ? (totals.total_revenue / daily.rows.length).toFixed(2) : 0,
+            items_per_day: daily.rows.length > 0 ? (totals.items_delivered / daily.rows.length).toFixed(1) : 0
+        }
+    });
+}
+
+// =====================================================
+// PRODUCTS SALES REPORT
+// =====================================================
+async function getProductsReport(companyId, startDate, endDate, user) {
+    let dcFilter = '';
+    const params = [companyId, startDate, endDate];
+    if (user.dcId) {
+        dcFilter = ' AND rr.dc_id = $4';
+        params.push(user.dcId);
+    }
+
+    // Product sales summary
+    const products = await query(`
+        SELECT 
+            p.id, p.code, p.name, p.category, p.unit_type, p.price, p.deposit_amount,
+            p.is_exchangeable, p.track_inventory,
+            COALESCE(SUM(di.qty_delivered), 0) as qty_sold,
+            COALESCE(SUM(di.qty_collected), 0) as qty_collected,
+            COALESCE(SUM(di.line_total), 0) as revenue,
+            COALESCE(SUM(di.deposit_collected), 0) as deposits_collected,
+            COALESCE(SUM(di.deposit_refunded), 0) as deposits_refunded,
+            COUNT(DISTINCT rrs.customer_id) as unique_customers,
+            COUNT(DISTINCT rrs.id) as delivery_count,
+            COALESCE(AVG(di.qty_delivered), 0) as avg_qty_per_delivery
+        FROM products p
+        LEFT JOIN delivery_items di ON p.id = di.product_id
+        LEFT JOIN route_run_stops rrs ON di.route_run_stop_id = rrs.id
+        LEFT JOIN route_runs rr ON rrs.run_id = rr.id 
+            AND rr.scheduled_date BETWEEN $2 AND $3
+            ${dcFilter}
+        WHERE p.company_id = $1 AND p.status = 'active'
+        GROUP BY p.id, p.code, p.name, p.category, p.unit_type, p.price, p.deposit_amount, p.is_exchangeable, p.track_inventory
+        ORDER BY revenue DESC
+    `, params);
+
+    // Sales by category
+    const byCategory = await query(`
+        SELECT 
+            COALESCE(p.category, 'Uncategorized') as category,
+            COUNT(DISTINCT p.id) as product_count,
+            COALESCE(SUM(di.qty_delivered), 0) as qty_sold,
+            COALESCE(SUM(di.qty_collected), 0) as qty_collected,
+            COALESCE(SUM(di.line_total), 0) as revenue,
+            COUNT(DISTINCT rrs.customer_id) as unique_customers
+        FROM products p
+        LEFT JOIN delivery_items di ON p.id = di.product_id
+        LEFT JOIN route_run_stops rrs ON di.route_run_stop_id = rrs.id
+        LEFT JOIN route_runs rr ON rrs.run_id = rr.id 
+            AND rr.scheduled_date BETWEEN $2 AND $3
+            ${dcFilter}
+        WHERE p.company_id = $1 AND p.status = 'active'
+        GROUP BY p.category
+        ORDER BY revenue DESC
+    `, params);
+
+    // Daily product sales trend
+    const dailyTrend = await query(`
+        SELECT 
+            rr.scheduled_date::date as date,
+            COALESCE(SUM(di.qty_delivered), 0) as qty_sold,
+            COALESCE(SUM(di.line_total), 0) as revenue
+        FROM delivery_items di
+        JOIN route_run_stops rrs ON di.route_run_stop_id = rrs.id
+        JOIN route_runs rr ON rrs.run_id = rr.id
+        WHERE rr.company_id = $1 
+        AND rr.scheduled_date BETWEEN $2 AND $3
+        ${dcFilter}
+        GROUP BY rr.scheduled_date::date
+        ORDER BY date DESC
+        LIMIT 30
+    `, params);
+
+    // Top selling products by customer
+    const topByCustomer = await query(`
+        SELECT 
+            c.id as customer_id, c.code as customer_code, c.name as customer_name,
+            p.id as product_id, p.name as product_name,
+            COALESCE(SUM(di.qty_delivered), 0) as qty_purchased,
+            COALESCE(SUM(di.line_total), 0) as total_spent
+        FROM customers c
+        JOIN route_run_stops rrs ON c.id = rrs.customer_id
+        JOIN route_runs rr ON rrs.run_id = rr.id AND rr.scheduled_date BETWEEN $2 AND $3
+        JOIN delivery_items di ON rrs.id = di.route_run_stop_id
+        JOIN products p ON di.product_id = p.id
+        WHERE c.company_id = $1 ${dcFilter}
+        GROUP BY c.id, c.code, c.name, p.id, p.name
+        ORDER BY total_spent DESC
+        LIMIT 50
+    `, params);
+
+    // Inventory status (current stock levels)
+    const inventory = await query(`
+        SELECT 
+            p.id, p.code, p.name, p.category,
+            COALESCE(ti.quantity, 0) as current_stock,
+            COALESCE(ti.min_quantity, 0) as min_quantity,
+            CASE WHEN ti.quantity < ti.min_quantity THEN true ELSE false END as low_stock
+        FROM products p
+        LEFT JOIN truck_inventory ti ON p.id = ti.product_id
+        WHERE p.company_id = $1 AND p.status = 'active' AND p.track_inventory = true
+        ORDER BY p.name
+    `, [companyId]);
+
+    // Customer assignments (how many customers have each product assigned)
+    const customerAssignments = await query(`
+        SELECT 
+            p.id, p.name, p.code,
+            COUNT(DISTINCT cp.customer_id) as assigned_customers
+        FROM products p
+        LEFT JOIN customer_products cp ON p.id = cp.product_id
+        WHERE p.company_id = $1 AND p.status = 'active'
+        GROUP BY p.id, p.name, p.code
+        ORDER BY assigned_customers DESC
+    `, [companyId]);
+
+    // Summary totals
+    const summary = products.rows.reduce((acc, p) => ({
+        total_products: acc.total_products + 1,
+        total_qty_sold: acc.total_qty_sold + parseInt(p.qty_sold),
+        total_qty_collected: acc.total_qty_collected + parseInt(p.qty_collected),
+        total_revenue: acc.total_revenue + parseFloat(p.revenue),
+        total_deposits_collected: acc.total_deposits_collected + parseFloat(p.deposits_collected),
+        total_deposits_refunded: acc.total_deposits_refunded + parseFloat(p.deposits_refunded),
+        unique_customers: Math.max(acc.unique_customers, parseInt(p.unique_customers) || 0)
+    }), { total_products: 0, total_qty_sold: 0, total_qty_collected: 0, total_revenue: 0, total_deposits_collected: 0, total_deposits_refunded: 0, unique_customers: 0 });
+
+    return success({
+        period: { start_date: startDate, end_date: endDate },
+        products: products.rows,
+        by_category: byCategory.rows,
+        daily_trend: dailyTrend.rows,
+        top_by_customer: topByCustomer.rows,
+        inventory_status: inventory.rows,
+        customer_assignments: customerAssignments.rows,
+        summary: {
+            ...summary,
+            net_deposits: summary.total_deposits_collected - summary.total_deposits_refunded,
+            avg_revenue_per_product: summary.total_products > 0 ? (summary.total_revenue / summary.total_products).toFixed(2) : 0
         }
     });
 }
@@ -616,18 +1024,19 @@ async function exportReportCSV(companyId, reportType, startDate, endDate, user) 
             const data = await getDriverReport(companyId, startDate, endDate, user);
             const report = JSON.parse(data.body);
             filename = `drivers_${startDate}_to_${endDate}.csv`;
-            headers = ['Code', 'Name', 'DC', 'Phone', 'License Class', 'HAZMAT', 'Tanker', 'Routes', 'Miles', 'Hours', 'Stops', 'Gallons', 'Revenue', 'Labor Cost', 'Revenue/Mile', 'Revenue/Hour'];
+            headers = ['Code', 'Name', 'DC', 'Phone', 'License Class', 'HAZMAT', 'Routes', 'Stops', 'Miles', 'Hours', 'Gallons', 'Items Delivered', 'Items Collected', 'Revenue', 'Skip Rate'];
             rows = report.drivers.map(d => [
-                d.code, d.name, d.dc_name || '', d.phone || '', d.license_class || '',
-                d.hazmat_certified ? 'Yes' : 'No', d.tanker_endorsed ? 'Yes' : 'No',
-                d.total_routes, parseFloat(d.total_miles || 0).toFixed(1),
-                (parseFloat(d.total_duration_minutes || 0) / 60).toFixed(1),
-                d.stops_completed,
+                d.code, d.name, d.dc_name || '', d.phone || '', d.cdl_class || '',
+                d.hazmat_certified ? 'Yes' : 'No',
+                parseInt(d.routes_completed || 0),
+                parseInt(d.stops_completed || 0),
+                parseFloat(d.total_miles || 0).toFixed(1),
+                parseFloat(d.total_hours || 0).toFixed(1),
                 parseFloat(d.total_gallons || 0).toFixed(0),
+                parseInt(d.items_delivered || 0),
+                parseInt(d.items_collected || 0),
                 parseFloat(d.total_revenue || 0).toFixed(2),
-                parseFloat(d.total_driver_cost || 0).toFixed(2),
-                d.total_miles > 0 ? (d.total_revenue / d.total_miles).toFixed(2) : '0.00',
-                d.total_duration_minutes > 0 ? (d.total_revenue / (d.total_duration_minutes / 60)).toFixed(2) : '0.00'
+                `${d.skip_rate || 0}%`
             ]);
             break;
         }
@@ -654,15 +1063,16 @@ async function exportReportCSV(companyId, reportType, startDate, endDate, user) 
             const data = await getCustomerReport(companyId, startDate, endDate, user);
             const report = JSON.parse(data.body);
             filename = `customers_${startDate}_to_${endDate}.csv`;
-            headers = ['Code', 'Name', 'Address', 'City', 'State', 'DC', 'Tank Size', 'Current Level', 'Service Type', 'Deliveries', 'Gallons', 'Revenue', 'Avg Gal/Delivery', 'Last Delivery'];
+            headers = ['Code', 'Name', 'Address', 'City', 'State', 'DC', 'Type', 'Payment Terms', 'Account Balance', 'Credit Limit', 'Deliveries', 'Gallons', 'Revenue', 'Last Delivery'];
             rows = report.customers.map(c => [
                 c.code, c.name, c.address || '', c.city || '', c.state || '',
-                c.dc_name || '', c.tank_size || 0, `${c.current_level || 0}%`,
-                c.service_type || '', c.delivery_count || 0,
+                c.dc_name || '', c.customer_type || '', c.payment_terms || '',
+                parseFloat(c.account_balance || 0).toFixed(2),
+                parseFloat(c.credit_limit || 0).toFixed(2),
+                parseInt(c.completed_deliveries || 0),
                 parseFloat(c.total_gallons || 0).toFixed(0),
-                parseFloat(c.total_revenue || 0).toFixed(2),
-                parseFloat(c.avg_gallons_per_delivery || 0).toFixed(1),
-                c.last_delivery_date || ''
+                parseFloat(c.total_spent || 0).toFixed(2),
+                c.last_delivery_in_period || c.last_delivery_date || ''
             ]);
             break;
         }
@@ -671,12 +1081,14 @@ async function exportReportCSV(companyId, reportType, startDate, endDate, user) 
             const data = await getDailyReport(companyId, startDate, endDate, user);
             const report = JSON.parse(data.body);
             filename = `daily_${startDate}_to_${endDate}.csv`;
-            headers = ['Date', 'Day', 'Routes', 'Completed', 'Stops', 'Miles', 'Gallons', 'Revenue', 'Cost', 'Profit'];
+            headers = ['Date', 'Day', 'Routes', 'Completed', 'Stops', 'Miles', 'Gallons', 'Items Delivered', 'Items Collected', 'Revenue', 'Cost', 'Profit'];
             rows = report.daily.map(d => [
                 d.date, new Date(d.date).toLocaleDateString('en-US', { weekday: 'long' }),
                 d.routes, d.completed_routes, d.stops_completed,
                 parseFloat(d.total_miles || 0).toFixed(1),
                 parseFloat(d.total_gallons || 0).toFixed(0),
+                parseInt(d.items_delivered || 0),
+                parseInt(d.items_collected || 0),
                 parseFloat(d.total_revenue || 0).toFixed(2),
                 parseFloat(d.total_cost || 0).toFixed(2),
                 (parseFloat(d.total_revenue || 0) - parseFloat(d.total_cost || 0)).toFixed(2)
@@ -688,15 +1100,33 @@ async function exportReportCSV(companyId, reportType, startDate, endDate, user) 
             const data = await getFinancialReport(companyId, startDate, endDate, user);
             const report = JSON.parse(data.body);
             filename = `financial_${startDate}_to_${endDate}.csv`;
-            headers = ['Date', 'Revenue', 'Fuel Cost', 'Labor Cost', 'Total Cost', 'Profit', 'Margin %'];
-            rows = report.daily_breakdown.map(d => [
+            headers = ['Date', 'Revenue', 'Cost', 'Gallons', 'Profit'];
+            rows = report.daily_trend.map(d => [
                 d.date,
                 parseFloat(d.revenue || 0).toFixed(2),
-                parseFloat(d.fuel_cost || 0).toFixed(2),
-                parseFloat(d.driver_cost || 0).toFixed(2),
-                parseFloat(d.total_cost || 0).toFixed(2),
-                (parseFloat(d.revenue || 0) - parseFloat(d.total_cost || 0)).toFixed(2),
-                d.revenue > 0 ? (((d.revenue - d.total_cost) / d.revenue) * 100).toFixed(1) : '0'
+                parseFloat(d.cost || 0).toFixed(2),
+                parseFloat(d.gallons || 0).toFixed(0),
+                (parseFloat(d.revenue || 0) - parseFloat(d.cost || 0)).toFixed(2)
+            ]);
+            break;
+        }
+
+        case 'products': {
+            const data = await getProductsReport(companyId, startDate, endDate, user);
+            const report = JSON.parse(data.body);
+            filename = `products_${startDate}_to_${endDate}.csv`;
+            headers = ['Code', 'Name', 'Category', 'Unit', 'Price', 'Qty Sold', 'Qty Collected', 'Revenue', 'Deposits Collected', 'Deposits Refunded', 'Net Deposits', 'Unique Customers', 'Deliveries'];
+            rows = report.products.map(p => [
+                p.code, p.name, p.category || '', p.unit_type || '',
+                parseFloat(p.price || 0).toFixed(2),
+                parseInt(p.qty_sold || 0),
+                parseInt(p.qty_collected || 0),
+                parseFloat(p.revenue || 0).toFixed(2),
+                parseFloat(p.deposits_collected || 0).toFixed(2),
+                parseFloat(p.deposits_refunded || 0).toFixed(2),
+                (parseFloat(p.deposits_collected || 0) - parseFloat(p.deposits_refunded || 0)).toFixed(2),
+                parseInt(p.unique_customers || 0),
+                parseInt(p.delivery_count || 0)
             ]);
             break;
         }
