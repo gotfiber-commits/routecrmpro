@@ -159,6 +159,12 @@ ALTER TABLE route_run_stops ADD COLUMN IF NOT EXISTS delivery_model VARCHAR(20);
 ALTER TABLE route_run_stops ADD COLUMN IF NOT EXISTS items_total DECIMAL(12, 2) DEFAULT 0;
 ALTER TABLE route_run_stops ADD COLUMN IF NOT EXISTS deposits_collected DECIMAL(12, 2) DEFAULT 0;
 ALTER TABLE route_run_stops ADD COLUMN IF NOT EXISTS deposits_refunded DECIMAL(12, 2) DEFAULT 0;
+ALTER TABLE route_run_stops ADD COLUMN IF NOT EXISTS items_delivered INTEGER DEFAULT 0;
+ALTER TABLE route_run_stops ADD COLUMN IF NOT EXISTS items_collected INTEGER DEFAULT 0;
+
+-- Add items tracking to route_runs for real-time totals
+ALTER TABLE route_runs ADD COLUMN IF NOT EXISTS total_items_delivered INTEGER DEFAULT 0;
+ALTER TABLE route_runs ADD COLUMN IF NOT EXISTS total_items_collected INTEGER DEFAULT 0;
 
 -- Trigger to auto-update customer balance
 CREATE OR REPLACE FUNCTION update_customer_balance()

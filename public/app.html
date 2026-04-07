@@ -753,6 +753,29 @@
             const [addingCustomer, setAddingCustomer] = useState(false);
             const [weatherDC, setWeatherDC] = useState(null);
             const [dcRoutes, setDcRoutes] = useState({});
+            const [selectedDCForRoutes, setSelectedDCForRoutes] = useState(null);
+            const [dcRoutesLoading, setDcRoutesLoading] = useState(false);
+            const [dcRoutesList, setDcRoutesList] = useState([]);
+
+            // Load active routes for a specific DC
+            const loadDCRoutes = async (dc) => {
+                setSelectedDCForRoutes(dc);
+                setDcRoutesLoading(true);
+                try {
+                    const allRoutes = await api.request('/routes-v2/runs');
+                    // Filter routes for this DC that are scheduled or in progress
+                    const filteredRoutes = allRoutes.filter(r => 
+                        r.dc_id === dc.id && 
+                        (r.status === 'scheduled' || r.status === 'in_progress')
+                    );
+                    setDcRoutesList(filteredRoutes);
+                } catch (err) {
+                    console.error('Error loading DC routes:', err);
+                    setDcRoutesList([]);
+                } finally {
+                    setDcRoutesLoading(false);
+                }
+            };
 
             // Initialize map once (but wait for data to determine center)
             useEffect(() => {
@@ -1403,6 +1426,14 @@
                                         </button>
                                         <button 
                                             className="btn btn-sm btn-secondary"
+                                            onClick={() => loadDCRoutes(dc)}
+                                            style={{fontSize:'0.7rem',padding:'0.2rem 0.4rem'}}
+                                            title={`View active routes for ${dc.name}`}
+                                        >
+                                            🚀
+                                        </button>
+                                        <button 
+                                            className="btn btn-sm btn-secondary"
                                             onClick={() => setWeatherDC(dc)}
                                             style={{fontSize:'0.7rem',padding:'0.2rem 0.4rem'}}
                                             title={`Weather forecast for ${dc.name}`}
@@ -1654,6 +1685,117 @@
 
                     {/* Weather Forecast Modal */}
                     {weatherDC && <WeatherForecastPanel dc={weatherDC} onClose={() => setWeatherDC(null)} />}
+
+                    {/* DC Active Routes Modal */}
+                    {selectedDCForRoutes && (
+                        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setSelectedDCForRoutes(null)}>
+                            <div className="modal" style={{maxWidth:'800px',maxHeight:'80vh',overflow:'hidden',display:'flex',flexDirection:'column'}}>
+                                <div className="modal-header" style={{background:'linear-gradient(135deg, #1e3a5f, #2d5a87)',borderBottom:'none'}}>
+                                    <h3 style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                                        🏭 {selectedDCForRoutes.name} - Active Routes
+                                    </h3>
+                                    <button className="modal-close" onClick={() => setSelectedDCForRoutes(null)}>×</button>
+                                </div>
+                                <div style={{padding:'1.5rem',overflowY:'auto',flex:1}}>
+                                    {dcRoutesLoading ? (
+                                        <div style={{textAlign:'center',padding:'3rem'}}>
+                                            <div className="spinner"></div>
+                                            <p style={{marginTop:'1rem',color:'var(--text-muted)'}}>Loading routes...</p>
+                                        </div>
+                                    ) : dcRoutesList.length === 0 ? (
+                                        <div style={{textAlign:'center',padding:'3rem'}}>
+                                            <div style={{fontSize:'3rem',marginBottom:'1rem'}}>📭</div>
+                                            <h3>No Active Routes</h3>
+                                            <p style={{color:'var(--text-muted)',marginTop:'0.5rem'}}>
+                                                There are no scheduled or in-progress routes for this distribution center.
+                                            </p>
+                                            <button 
+                                                className="btn btn-primary" 
+                                                style={{marginTop:'1rem'}}
+                                                onClick={() => { setSelectedDCForRoutes(null); onNavigate('route-templates'); }}
+                                            >
+                                                🚀 Generate Routes
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            <div style={{marginBottom:'1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                                <span style={{color:'var(--text-muted)'}}>
+                                                    {dcRoutesList.length} route{dcRoutesList.length !== 1 ? 's' : ''} found
+                                                </span>
+                                                <button 
+                                                    className="btn btn-sm btn-secondary"
+                                                    onClick={() => { setSelectedDCForRoutes(null); onNavigate('active-routes'); }}
+                                                >
+                                                    View All Routes →
+                                                </button>
+                                            </div>
+                                            <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+                                                {dcRoutesList.map(route => (
+                                                    <div 
+                                                        key={route.id}
+                                                        style={{
+                                                            background:'var(--bg-card)',
+                                                            border: route.status === 'in_progress' ? '2px solid var(--warning)' : '1px solid var(--border-color)',
+                                                            borderRadius:'12px',
+                                                            padding:'1rem',
+                                                            cursor:'pointer',
+                                                            transition:'all 0.2s'
+                                                        }}
+                                                        onClick={() => { setSelectedDCForRoutes(null); onNavigate('active-routes'); }}
+                                                        onMouseOver={(e) => e.currentTarget.style.borderColor = 'var(--primary)'}
+                                                        onMouseOut={(e) => e.currentTarget.style.borderColor = route.status === 'in_progress' ? 'var(--warning)' : 'var(--border-color)'}
+                                                    >
+                                                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'0.5rem'}}>
+                                                            <div>
+                                                                <strong style={{fontSize:'1.1rem'}}>{route.name || `Route ${route.id.slice(0,8)}`}</strong>
+                                                                <div style={{fontSize:'0.85rem',color:'var(--text-muted)',marginTop:'0.25rem'}}>
+                                                                    {new Date(route.scheduled_date).toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'})}
+                                                                    {route.driver_name && <span> • 👤 {route.driver_name}</span>}
+                                                                </div>
+                                                            </div>
+                                                            <span style={{
+                                                                padding:'0.25rem 0.75rem',
+                                                                borderRadius:'20px',
+                                                                fontSize:'0.75rem',
+                                                                fontWeight:'600',
+                                                                background: route.status === 'in_progress' ? 'rgba(245,158,11,0.2)' : 'rgba(99,102,241,0.2)',
+                                                                color: route.status === 'in_progress' ? 'var(--warning)' : 'var(--primary)'
+                                                            }}>
+                                                                {route.status === 'in_progress' ? '🚚 In Progress' : '📅 Scheduled'}
+                                                            </span>
+                                                        </div>
+                                                        <div style={{display:'flex',gap:'1.5rem',fontSize:'0.9rem',color:'var(--text-secondary)'}}>
+                                                            <span>🛑 {route.total_stops || 0} stops</span>
+                                                            <span>✓ {route.stops_completed || 0} done</span>
+                                                            <span>📏 {route.estimated_miles ? parseFloat(route.estimated_miles).toFixed(0) : '—'} mi</span>
+                                                            {route.truck_code && <span>🚚 {route.truck_code}</span>}
+                                                        </div>
+                                                        {route.status === 'in_progress' && route.stops_completed > 0 && (
+                                                            <div style={{marginTop:'0.75rem'}}>
+                                                                <div style={{height:'6px',background:'var(--bg-dark)',borderRadius:'3px',overflow:'hidden'}}>
+                                                                    <div style={{
+                                                                        height:'100%',
+                                                                        width:`${(route.stops_completed / route.total_stops) * 100}%`,
+                                                                        background:'linear-gradient(90deg, var(--success), #34d399)',
+                                                                        borderRadius:'3px',
+                                                                        transition:'width 0.3s'
+                                                                    }}></div>
+                                                                </div>
+                                                                <div style={{fontSize:'0.75rem',color:'var(--text-muted)',marginTop:'0.25rem',textAlign:'right'}}>
+                                                                    {Math.round((route.stops_completed / route.total_stops) * 100)}% complete
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </>
             );
         }
@@ -4235,10 +4377,175 @@
             const [cloneDate, setCloneDate] = useState(new Date().toISOString().split('T')[0]);
             const [editingRun, setEditingRun] = useState(false);
             const [runEdits, setRunEdits] = useState({});
+            const [showRouteMap, setShowRouteMap] = useState(true);
+            
+            // Map refs
+            const routeDetailMapRef = useRef(null);
+            const routeDetailMapInstance = useRef(null);
+            const routeDetailMarkersRef = useRef([]);
+            const routeDetailRendererRef = useRef(null);
 
             useEffect(() => {
                 loadRunDetail();
             }, [run.id]);
+
+            // Initialize and update route map
+            useEffect(() => {
+                if (!showRouteMap || !routeDetailMapRef.current || !runData) return;
+                
+                // Clean up previous map instance
+                if (routeDetailMapInstance.current) {
+                    routeDetailMarkersRef.current.forEach(m => m.setMap(null));
+                    routeDetailMarkersRef.current = [];
+                    if (routeDetailRendererRef.current) {
+                        routeDetailRendererRef.current.setMap(null);
+                    }
+                }
+
+                const dcLat = parseFloat(runData.dc_lat);
+                const dcLng = parseFloat(runData.dc_lng);
+                
+                if (isNaN(dcLat) || isNaN(dcLng)) return;
+
+                // Create or reuse map
+                if (!routeDetailMapInstance.current) {
+                    const map = new google.maps.Map(routeDetailMapRef.current, {
+                        center: { lat: dcLat, lng: dcLng },
+                        zoom: 10,
+                        mapTypeControl: true,
+                        streetViewControl: false,
+                        fullscreenControl: true
+                    });
+                    routeDetailMapInstance.current = map;
+                }
+
+                const map = routeDetailMapInstance.current;
+                const bounds = new google.maps.LatLngBounds();
+                const stops = runData.stops || [];
+
+                // DC marker
+                const dcMarker = new google.maps.Marker({
+                    position: { lat: dcLat, lng: dcLng },
+                    map,
+                    title: runData.dc_name + ' (Distribution Center)',
+                    icon: {
+                        url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="#6366F1" stroke="white" stroke-width="1"><path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/></svg>'),
+                        scaledSize: new google.maps.Size(40, 40),
+                        anchor: new google.maps.Point(20, 20)
+                    },
+                    zIndex: 1000
+                });
+                const dcInfo = new google.maps.InfoWindow({
+                    content: `<div style="color:#333;padding:8px"><strong>🏭 ${runData.dc_name}</strong><br/><span style="color:#666">Start/End Point</span></div>`
+                });
+                dcMarker.addListener('click', () => dcInfo.open(map, dcMarker));
+                routeDetailMarkersRef.current.push(dcMarker);
+                bounds.extend({ lat: dcLat, lng: dcLng });
+
+                // Stop markers
+                stops.forEach((stop, idx) => {
+                    const lat = parseFloat(stop.lat);
+                    const lng = parseFloat(stop.lng);
+                    if (isNaN(lat) || isNaN(lng)) return;
+
+                    let fillColor = '#F59E0B'; // pending - amber
+                    if (stop.status === 'completed') fillColor = '#10B981'; // green
+                    if (stop.status === 'skipped') fillColor = '#6B7280'; // gray
+
+                    const marker = new google.maps.Marker({
+                        position: { lat, lng },
+                        map,
+                        title: `Stop ${stop.stop_number}: ${stop.customer_name}`,
+                        label: {
+                            text: String(stop.stop_number),
+                            color: 'white',
+                            fontWeight: 'bold',
+                            fontSize: '11px'
+                        },
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 14,
+                            fillColor: fillColor,
+                            fillOpacity: 1,
+                            strokeColor: 'white',
+                            strokeWeight: 2
+                        }
+                    });
+
+                    const infoContent = `
+                        <div style="color:#333;min-width:200px;padding:8px">
+                            <strong style="font-size:14px">Stop ${stop.stop_number}: ${stop.customer_name}</strong>
+                            <div style="color:#666;margin-top:4px">${stop.address || ''}</div>
+                            <div style="color:#666">${stop.city}, ${stop.state}</div>
+                            <div style="margin-top:8px;display:flex;gap:12px">
+                                <span style="color:${stop.tank_level_before <= 25 ? '#EF4444' : stop.tank_level_before <= 50 ? '#F59E0B' : '#10B981'}">
+                                    Tank: ${stop.tank_level_before || '?'}%
+                                </span>
+                                <span>Size: ${stop.tank_size_gallons || '?'} gal</span>
+                            </div>
+                            <div style="margin-top:8px;padding:4px 8px;background:${fillColor};color:white;border-radius:4px;text-align:center;font-weight:600">
+                                ${stop.status.toUpperCase()}
+                            </div>
+                        </div>
+                    `;
+                    const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+                    marker.addListener('click', () => infoWindow.open(map, marker));
+                    routeDetailMarkersRef.current.push(marker);
+                    bounds.extend({ lat, lng });
+                });
+
+                // Draw route path
+                if (stops.length > 0) {
+                    const validStops = stops.filter(s => !isNaN(parseFloat(s.lat)) && !isNaN(parseFloat(s.lng)));
+                    if (validStops.length > 0) {
+                        const waypoints = validStops.map(stop => ({
+                            location: new google.maps.LatLng(parseFloat(stop.lat), parseFloat(stop.lng)),
+                            stopover: true
+                        }));
+
+                        const directionsService = new google.maps.DirectionsService();
+                        directionsService.route({
+                            origin: { lat: dcLat, lng: dcLng },
+                            destination: { lat: dcLat, lng: dcLng },
+                            waypoints: waypoints,
+                            travelMode: google.maps.TravelMode.DRIVING,
+                            optimizeWaypoints: false
+                        }, (result, status) => {
+                            if (status === google.maps.DirectionsStatus.OK) {
+                                const renderer = new google.maps.DirectionsRenderer({
+                                    map: map,
+                                    directions: result,
+                                    suppressMarkers: true,
+                                    preserveViewport: true,
+                                    polylineOptions: {
+                                        strokeColor: '#6366F1',
+                                        strokeOpacity: 0.8,
+                                        strokeWeight: 4
+                                    }
+                                });
+                                routeDetailRendererRef.current = renderer;
+                            }
+                        });
+                    }
+                }
+
+                // Fit bounds
+                if (stops.length > 0) {
+                    map.fitBounds(bounds);
+                } else {
+                    map.setCenter({ lat: dcLat, lng: dcLng });
+                    map.setZoom(12);
+                }
+
+                // Cleanup on unmount
+                return () => {
+                    routeDetailMarkersRef.current.forEach(m => m.setMap(null));
+                    routeDetailMarkersRef.current = [];
+                    if (routeDetailRendererRef.current) {
+                        routeDetailRendererRef.current.setMap(null);
+                    }
+                };
+            }, [showRouteMap, runData]);
 
             const loadRunDetail = async () => {
                 try {
@@ -4699,6 +5006,53 @@
                             <div className="stat-value">${parseFloat(runData?.estimated_total_cost || 0).toFixed(0)}</div>
                             <div className="stat-label">Est. Cost</div>
                         </div>
+                    </div>
+
+                    {/* Route Map */}
+                    <div className="card" style={{marginBottom:'1.5rem'}}>
+                        <div style={{padding:'1rem',borderBottom:'1px solid var(--border-color)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                            <h3 style={{margin:0,display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                                🗺️ Route Map
+                            </h3>
+                            <button 
+                                className="btn btn-sm btn-secondary"
+                                onClick={() => setShowRouteMap(!showRouteMap)}
+                            >
+                                {showRouteMap ? '▼ Hide Map' : '▶ Show Map'}
+                            </button>
+                        </div>
+                        {showRouteMap && (
+                            <div style={{height:'400px',position:'relative'}}>
+                                <div ref={routeDetailMapRef} style={{width:'100%',height:'100%'}}></div>
+                                {/* Map Legend */}
+                                <div style={{
+                                    position:'absolute',
+                                    bottom:'10px',
+                                    left:'10px',
+                                    background:'rgba(255,255,255,0.95)',
+                                    padding:'8px 12px',
+                                    borderRadius:'8px',
+                                    boxShadow:'0 2px 10px rgba(0,0,0,0.2)',
+                                    fontSize:'0.75rem',
+                                    display:'flex',
+                                    gap:'12px',
+                                    color:'#333'
+                                }}>
+                                    <span style={{display:'flex',alignItems:'center',gap:'4px'}}>
+                                        <span style={{width:'12px',height:'12px',borderRadius:'50%',background:'#6366F1'}}></span> DC
+                                    </span>
+                                    <span style={{display:'flex',alignItems:'center',gap:'4px'}}>
+                                        <span style={{width:'12px',height:'12px',borderRadius:'50%',background:'#F59E0B'}}></span> Pending
+                                    </span>
+                                    <span style={{display:'flex',alignItems:'center',gap:'4px'}}>
+                                        <span style={{width:'12px',height:'12px',borderRadius:'50%',background:'#10B981'}}></span> Complete
+                                    </span>
+                                    <span style={{display:'flex',alignItems:'center',gap:'4px'}}>
+                                        <span style={{width:'12px',height:'12px',borderRadius:'50%',background:'#6B7280'}}></span> Skipped
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Instructions Card */}
@@ -9266,7 +9620,7 @@
             const [selectedStop, setSelectedStop] = useState(null);
             const [expandedStop, setExpandedStop] = useState(null);
             const [customerProducts, setCustomerProducts] = useState([]);
-            const [showMap, setShowMap] = useState(false);
+            const [showMap, setShowMap] = useState(true); // Show map by default for drivers
             
             // Map refs - must be declared before any conditional returns
             const driverMapRef = useRef(null);
@@ -9278,70 +9632,100 @@
                 loadRouteDetails();
             }, [route.id]);
 
-            // Map initialization effect - must be before conditional returns
+            // Map initialization and UPDATE effect - refreshes when routeData changes
             useEffect(() => {
-                if (showMap && driverMapRef.current && !driverMapInstance.current && routeData?.dc_lat) {
+                if (!showMap || !driverMapRef.current || !routeData?.dc_lat) return;
+                
+                const dcLat = parseFloat(routeData.dc_lat);
+                const dcLng = parseFloat(routeData.dc_lng);
+                if (isNaN(dcLat) || isNaN(dcLng)) return;
+
+                // Clear existing markers and route
+                driverMarkersRef.current.forEach(m => m.setMap(null));
+                driverMarkersRef.current = [];
+                if (driverRouteRenderer.current) {
+                    driverRouteRenderer.current.setMap(null);
+                    driverRouteRenderer.current = null;
+                }
+
+                // Create map if it doesn't exist
+                if (!driverMapInstance.current) {
                     const map = new google.maps.Map(driverMapRef.current, {
-                        center: { lat: parseFloat(routeData.dc_lat), lng: parseFloat(routeData.dc_lng) },
+                        center: { lat: dcLat, lng: dcLng },
                         zoom: 10,
                         mapTypeControl: false,
                         streetViewControl: false,
                         fullscreenControl: true
                     });
                     driverMapInstance.current = map;
+                }
+                
+                const map = driverMapInstance.current;
+                const stops = routeData?.stops || [];
+                const bounds = new google.maps.LatLngBounds();
+                const dcPos = { lat: dcLat, lng: dcLng };
+                
+                // DC marker
+                const dcMarker = new google.maps.Marker({
+                    position: dcPos,
+                    map,
+                    title: routeData.dc_name + ' (DC)',
+                    icon: {
+                        url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="#6366F1" stroke="white" stroke-width="1"><path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/></svg>'),
+                        scaledSize: new google.maps.Size(36, 36),
+                        anchor: new google.maps.Point(18, 18)
+                    },
+                    zIndex: 100
+                });
+                driverMarkersRef.current.push(dcMarker);
+                bounds.extend(dcPos);
+                
+                // Stop markers - colors update based on current status
+                stops.forEach((stop, idx) => {
+                    const lat = parseFloat(stop.lat);
+                    const lng = parseFloat(stop.lng);
+                    if (isNaN(lat) || isNaN(lng)) return;
                     
-                    // Draw route on map
-                    const stops = routeData?.stops || [];
-                    if (stops.length > 0) {
-                        const bounds = new google.maps.LatLngBounds();
-                        const dcPos = { lat: parseFloat(routeData.dc_lat), lng: parseFloat(routeData.dc_lng) };
-                        
-                        // DC marker
-                        const dcMarker = new google.maps.Marker({
-                            position: dcPos,
-                            map,
-                            title: routeData.dc_name + ' (DC)',
-                            icon: {
-                                url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="#6366F1" stroke="white" stroke-width="1"><path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/></svg>'),
-                                scaledSize: new google.maps.Size(36, 36),
-                                anchor: new google.maps.Point(18, 18)
-                            },
-                            zIndex: 100
-                        });
-                        driverMarkersRef.current.push(dcMarker);
-                        bounds.extend(dcPos);
-                        
-                        // Stop markers
-                        stops.forEach((stop, idx) => {
-                            const lat = parseFloat(stop.lat);
-                            const lng = parseFloat(stop.lng);
-                            if (isNaN(lat) || isNaN(lng)) return;
-                            
-                            const pos = { lat, lng };
-                            let fillColor = '#F59E0B'; // pending - amber
-                            if (stop.status === 'completed') fillColor = '#10B981'; // green
-                            if (stop.status === 'skipped') fillColor = '#6B7280'; // gray
-                            
-                            const marker = new google.maps.Marker({
-                                position: pos,
-                                map,
-                                title: `Stop ${stop.stop_number}: ${stop.customer_name}`,
-                                label: { text: String(stop.stop_number), color: 'white', fontWeight: 'bold', fontSize: '11px' },
-                                icon: {
-                                    path: google.maps.SymbolPath.CIRCLE,
-                                    scale: 14,
-                                    fillColor: fillColor,
-                                    fillOpacity: 1,
-                                    strokeColor: 'white',
-                                    strokeWeight: 2
-                                }
-                            });
-                            driverMarkersRef.current.push(marker);
-                            bounds.extend(pos);
-                        });
-                        
-                        // Draw route path
-                        const waypoints = stops.map(stop => ({
+                    const pos = { lat, lng };
+                    let fillColor = '#F59E0B'; // pending - amber
+                    if (stop.status === 'completed') fillColor = '#10B981'; // green
+                    if (stop.status === 'skipped') fillColor = '#6B7280'; // gray
+                    
+                    const marker = new google.maps.Marker({
+                        position: pos,
+                        map,
+                        title: `Stop ${stop.stop_number}: ${stop.customer_name}`,
+                        label: { text: String(stop.stop_number), color: 'white', fontWeight: 'bold', fontSize: '11px' },
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 14,
+                            fillColor: fillColor,
+                            fillOpacity: 1,
+                            strokeColor: 'white',
+                            strokeWeight: 2
+                        }
+                    });
+                    
+                    // Add click handler with stop info
+                    const infoContent = `
+                        <div style="color:#333;min-width:180px">
+                            <strong>${stop.customer_name}</strong><br/>
+                            <span style="color:#666">${stop.address}</span><br/>
+                            <span style="padding:2px 6px;background:${fillColor};color:white;border-radius:4px;font-size:11px">${stop.status.toUpperCase()}</span>
+                        </div>
+                    `;
+                    const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+                    marker.addListener('click', () => infoWindow.open(map, marker));
+                    
+                    driverMarkersRef.current.push(marker);
+                    bounds.extend(pos);
+                });
+                
+                // Draw route path
+                if (stops.length > 0) {
+                    const validStops = stops.filter(s => !isNaN(parseFloat(s.lat)) && !isNaN(parseFloat(s.lng)));
+                    if (validStops.length > 0) {
+                        const waypoints = validStops.map(stop => ({
                             location: new google.maps.LatLng(parseFloat(stop.lat), parseFloat(stop.lng)),
                             stopover: true
                         }));
@@ -9368,11 +9752,11 @@
                                 driverRouteRenderer.current = renderer;
                             }
                         });
-                        
-                        map.fitBounds(bounds);
                     }
                 }
-            }, [showMap, routeData]);
+                
+                map.fitBounds(bounds);
+            }, [showMap, routeData]); // Re-run when routeData changes (after completing a stop)
 
             const loadRouteDetails = async () => {
                 try {
@@ -9548,17 +9932,44 @@
                                 <div style={{fontSize:'1.5rem',fontWeight:'700'}}>{pending}</div>
                                 <div style={{fontSize:'0.75rem',opacity:0.85}}>Left</div>
                             </div>
+                            {deliverySettings.deliveryModel === 'products' ? (
+                                <div>
+                                    <div style={{fontSize:'1.5rem',fontWeight:'700'}}>
+                                        {parseInt(routeData?.total_items_delivered || 0)}
+                                    </div>
+                                    <div style={{fontSize:'0.75rem',opacity:0.85}}>Items</div>
+                                </div>
+                            ) : (
+                                <div>
+                                    <div style={{fontSize:'1.5rem',fontWeight:'700'}}>{parseFloat(routeData?.total_gallons_delivered || 0).toFixed(0)}</div>
+                                    <div style={{fontSize:'0.75rem',opacity:0.85}}>Gallons</div>
+                                </div>
+                            )}
+                        </div>
+                        {/* Revenue row */}
+                        <div style={{display:'flex',justifyContent:'space-around',textAlign:'center',marginTop:'0.75rem',paddingTop:'0.75rem',borderTop:'1px solid rgba(255,255,255,0.2)'}}>
                             <div>
-                                <div style={{fontSize:'1.5rem',fontWeight:'700'}}>{parseFloat(routeData?.total_gallons_delivered || 0).toFixed(0)}</div>
-                                <div style={{fontSize:'0.75rem',opacity:0.85}}>Gallons</div>
+                                <div style={{fontSize:'1.25rem',fontWeight:'700'}}>${parseFloat(routeData?.total_revenue || 0).toFixed(2)}</div>
+                                <div style={{fontSize:'0.7rem',opacity:0.85}}>Revenue</div>
+                            </div>
+                            {deliverySettings.deliveryModel === 'products' && (
+                                <div>
+                                    <div style={{fontSize:'1.25rem',fontWeight:'700'}}>
+                                        {parseInt(routeData?.total_items_collected || 0)}
+                                    </div>
+                                    <div style={{fontSize:'0.7rem',opacity:0.85}}>Collected</div>
+                                </div>
+                            )}
+                            <div>
+                                <div style={{fontSize:'1.25rem',fontWeight:'700'}}>{routeData?.estimated_miles || '—'}</div>
+                                <div style={{fontSize:'0.7rem',opacity:0.85}}>Miles</div>
                             </div>
                         </div>
                         <div className="route-progress">
                             <div className="route-progress-fill" style={{width:`${progress}%`}}></div>
                         </div>
-                        <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.8rem',marginTop:'0.5rem',opacity:0.9}}>
+                        <div style={{display:'flex',justifyContent:'center',fontSize:'0.8rem',marginTop:'0.5rem',opacity:0.9}}>
                             <span>{progress.toFixed(0)}% Complete</span>
-                            <span>{routeData?.estimated_miles || '—'} miles</span>
                         </div>
                     </div>
 

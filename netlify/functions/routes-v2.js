@@ -1284,6 +1284,10 @@ async function handleRuns(method, path, companyId, user, event) {
         // Calculate final delivery total
         const deliveryTotal = itemsTotal + depositsCollected - depositsRefunded;
 
+        // Calculate total items delivered and collected
+        const totalDelivered = items.reduce((sum, i) => sum + (parseInt(i.quantity_delivered) || 0), 0);
+        const totalCollected = items.reduce((sum, i) => sum + (parseInt(i.quantity_collected) || 0), 0);
+
         // Update the stop record
         const result = await query(
             `UPDATE route_run_stops SET 
@@ -1296,10 +1300,12 @@ async function handleRuns(method, path, companyId, user, event) {
                 items_total = $3,
                 deposits_collected = $4,
                 deposits_refunded = $5,
-                notes = $6,
+                items_delivered = $6,
+                items_collected = $7,
+                notes = $8,
                 updated_at = NOW()
-             WHERE id = $7 AND run_id = $8 RETURNING *`,
-            [totalGallonEquivalent, deliveryTotal, itemsTotal, depositsCollected, depositsRefunded, body.notes, stopId, runId]
+             WHERE id = $9 AND run_id = $10 RETURNING *`,
+            [totalGallonEquivalent, deliveryTotal, itemsTotal, depositsCollected, depositsRefunded, totalDelivered, totalCollected, body.notes, stopId, runId]
         );
 
         // Update customer record with delivery info
@@ -1320,10 +1326,6 @@ async function handleRuns(method, path, companyId, user, event) {
                 [totalGallonEquivalent, customerId]
             );
         }
-
-        // Calculate total items delivered and collected
-        const totalDelivered = items.reduce((sum, i) => sum + (parseInt(i.quantity_delivered) || 0), 0);
-        const totalCollected = items.reduce((sum, i) => sum + (parseInt(i.quantity_collected) || 0), 0);
 
         // Build detailed transaction description
         const txDescription = deliveredProducts.length > 0 
@@ -1692,7 +1694,9 @@ async function updateRunStats(runId) {
             COUNT(*) as total_stops,
             COUNT(*) FILTER (WHERE status IN ('completed', 'skipped')) as stops_completed,
             COALESCE(SUM(gallons_delivered), 0) as total_gallons,
-            COALESCE(SUM(delivery_total), 0) as total_revenue
+            COALESCE(SUM(delivery_total), 0) as total_revenue,
+            COALESCE(SUM(items_delivered), 0) as total_items_delivered,
+            COALESCE(SUM(items_collected), 0) as total_items_collected
          FROM route_run_stops WHERE run_id = $1`,
         [runId]
     );
@@ -1703,9 +1707,12 @@ async function updateRunStats(runId) {
             stops_completed = $1,
             total_gallons_delivered = $2,
             total_revenue = $3,
+            total_items_delivered = $4,
+            total_items_collected = $5,
             updated_at = NOW()
-         WHERE id = $4`,
-        [stats.stops_completed, stats.total_gallons, stats.total_revenue, runId]
+         WHERE id = $6`,
+        [stats.stops_completed, stats.total_gallons, stats.total_revenue, 
+         stats.total_items_delivered, stats.total_items_collected, runId]
     );
 }
 
