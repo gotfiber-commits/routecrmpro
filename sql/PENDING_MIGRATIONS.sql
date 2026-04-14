@@ -248,6 +248,33 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =====================================================
+-- 7. DC INVENTORY - Product stock at each Distribution Center
+-- =====================================================
+-- Tracks quantity of each product available at each DC
+-- Updated when trucks load/unload products
+
+CREATE TABLE IF NOT EXISTS dc_inventory (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    dc_id UUID NOT NULL REFERENCES distribution_centers(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    quantity_on_hand INTEGER DEFAULT 0,          -- Current stock level
+    reorder_level INTEGER DEFAULT 0,             -- Alert when stock falls below this
+    max_capacity INTEGER DEFAULT 0,              -- Maximum storage capacity
+    last_restocked_at TIMESTAMP,                 -- Last time inventory was added
+    last_depleted_at TIMESTAMP,                  -- Last time inventory was removed
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(dc_id, product_id)
+);
+
+-- Index for fast lookups
+CREATE INDEX IF NOT EXISTS idx_dc_inventory_dc ON dc_inventory(dc_id);
+CREATE INDEX IF NOT EXISTS idx_dc_inventory_product ON dc_inventory(product_id);
+CREATE INDEX IF NOT EXISTS idx_dc_inventory_low_stock ON dc_inventory(dc_id) WHERE quantity_on_hand <= reorder_level;
+
+-- =====================================================
 -- VERIFICATION
 -- =====================================================
 -- Run this to verify all tables exist:
@@ -275,6 +302,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'customer_transactions') THEN
         missing_tables := missing_tables || 'customer_transactions, ';
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'dc_inventory') THEN
+        missing_tables := missing_tables || 'dc_inventory, ';
+    END IF;
     
     IF missing_tables = '' THEN
         RAISE NOTICE '✅ All required tables exist!';
@@ -289,4 +319,5 @@ UNION ALL SELECT 'invoices', COUNT(*) FROM invoices
 UNION ALL SELECT 'payments', COUNT(*) FROM payments
 UNION ALL SELECT 'billing_ledger', COUNT(*) FROM billing_ledger
 UNION ALL SELECT 'plan_pricing', COUNT(*) FROM plan_pricing
-UNION ALL SELECT 'customer_transactions', COUNT(*) FROM customer_transactions;
+UNION ALL SELECT 'customer_transactions', COUNT(*) FROM customer_transactions
+UNION ALL SELECT 'dc_inventory', COUNT(*) FROM dc_inventory;

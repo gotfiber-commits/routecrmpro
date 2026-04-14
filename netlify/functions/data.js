@@ -176,6 +176,7 @@ async function getAllData(companyId, user) {
 async function handleDistributionCenters(method, path, companyId, user, event) {
     const subPath = path.replace('/distribution-centers', '');
 
+    // GET /distribution-centers - List all DCs
     if (method === 'GET' && subPath === '') {
         const result = await query(
             'SELECT * FROM distribution_centers WHERE company_id = $1 ORDER BY name',
@@ -184,6 +185,105 @@ async function handleDistributionCenters(method, path, companyId, user, event) {
         return success(result.rows);
     }
 
+    // GET /distribution-centers/:id/inventory - Get DC inventory with product details
+    if (method === 'GET' && subPath.match(/^\/[a-f0-9-]+\/inventory$/)) {
+        const id = subPath.split('/')[1];
+        const result = await query(
+            `SELECT di.*, p.name as product_name, p.code as product_code, p.unit_type, p.price
+             FROM dc_inventory di
+             JOIN products p ON di.product_id = p.id
+             WHERE di.dc_id = $1 AND di.company_id = $2
+             ORDER BY p.name`,
+            [id, companyId]
+        );
+        return success(result.rows);
+    }
+
+    // POST /distribution-centers/:id/inventory - Add or update product inventory
+    if (method === 'POST' && subPath.match(/^\/[a-f0-9-]+\/inventory$/)) {
+        if (!requireRole(user, ['admin'])) {
+            return error('Admin access required', 403);
+        }
+        const dcId = subPath.split('/')[1];
+        const body = parseBody(event);
+        
+        // Upsert - insert or update if product already exists
+        const result = await query(
+            `INSERT INTO dc_inventory (company_id, dc_id, product_id, quantity_on_hand, reorder_level, max_capacity, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (dc_id, product_id) 
+             DO UPDATE SET 
+                quantity_on_hand = $4,
+                reorder_level = $5,
+                max_capacity = $6,
+                notes = $7,
+                updated_at = NOW()
+             RETURNING *`,
+            [companyId, dcId, body.product_id, body.quantity_on_hand || 0, body.reorder_level || 0, body.max_capacity || 0, body.notes]
+        );
+        return success(result.rows[0], 201);
+    }
+
+    // PUT /distribution-centers/:id/inventory/:productId - Update inventory level
+    if (method === 'PUT' && subPath.match(/^\/[a-f0-9-]+\/inventory\/[a-f0-9-]+$/)) {
+        if (!requireRole(user, ['admin', 'dispatch'])) {
+            return error('Access denied', 403);
+        }
+        const parts = subPath.split('/');
+        const dcId = parts[1];
+        const productId = parts[3];
+        const body = parseBody(event);
+        
+        // Support both absolute and relative updates
+        let result;
+        if (body.adjustment !== undefined) {
+            // Relative adjustment: +10 or -5
+            result = await query(
+                `UPDATE dc_inventory 
+                 SET quantity_on_hand = quantity_on_hand + $1,
+                     last_restocked_at = CASE WHEN $1 > 0 THEN NOW() ELSE last_restocked_at END,
+                     last_depleted_at = CASE WHEN $1 < 0 THEN NOW() ELSE last_depleted_at END,
+                     updated_at = NOW()
+                 WHERE dc_id = $2 AND product_id = $3 AND company_id = $4
+                 RETURNING *`,
+                [body.adjustment, dcId, productId, companyId]
+            );
+        } else {
+            // Absolute update
+            result = await query(
+                `UPDATE dc_inventory 
+                 SET quantity_on_hand = COALESCE($1, quantity_on_hand),
+                     reorder_level = COALESCE($2, reorder_level),
+                     max_capacity = COALESCE($3, max_capacity),
+                     notes = COALESCE($4, notes),
+                     updated_at = NOW()
+                 WHERE dc_id = $5 AND product_id = $6 AND company_id = $7
+                 RETURNING *`,
+                [body.quantity_on_hand, body.reorder_level, body.max_capacity, body.notes, dcId, productId, companyId]
+            );
+        }
+        
+        if (result.rows.length === 0) return error('Inventory record not found', 404);
+        return success(result.rows[0]);
+    }
+
+    // DELETE /distribution-centers/:id/inventory/:productId - Remove product from DC
+    if (method === 'DELETE' && subPath.match(/^\/[a-f0-9-]+\/inventory\/[a-f0-9-]+$/)) {
+        if (!requireRole(user, ['admin'])) {
+            return error('Admin access required', 403);
+        }
+        const parts = subPath.split('/');
+        const dcId = parts[1];
+        const productId = parts[3];
+        
+        await query(
+            'DELETE FROM dc_inventory WHERE dc_id = $1 AND product_id = $2 AND company_id = $3',
+            [dcId, productId, companyId]
+        );
+        return success({ message: 'Deleted' });
+    }
+
+    // GET /distribution-centers/:id - Get single DC
     if (method === 'GET' && subPath.match(/^\/[a-f0-9-]+$/)) {
         const id = subPath.slice(1);
         const result = await query(

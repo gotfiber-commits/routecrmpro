@@ -1151,7 +1151,7 @@ async function handleRuns(method, path, companyId, user, event) {
 
         // Verify run belongs to company and is in progress
         const runCheck = await query(
-            'SELECT rr.id, rr.status, rr.truck_id FROM route_runs rr WHERE rr.id = $1 AND rr.company_id = $2',
+            'SELECT rr.id, rr.status, rr.truck_id, rr.dc_id FROM route_runs rr WHERE rr.id = $1 AND rr.company_id = $2',
             [runId, companyId]
         );
         if (runCheck.rows.length === 0) {
@@ -1162,6 +1162,7 @@ async function handleRuns(method, path, companyId, user, event) {
         }
 
         const truckId = runCheck.rows[0].truck_id;
+        const dcId = runCheck.rows[0].dc_id;  // DC for inventory updates
 
         // Get stop info
         const stopInfo = await query(
@@ -1340,6 +1341,41 @@ async function handleRuns(method, path, companyId, user, event) {
              ON CONFLICT DO NOTHING`,
             [companyId, customerId, deliveryTotal, totalDelivered, totalCollected, stopId, txDescription, user.userId]
         );
+
+        // =====================================================
+        // UPDATE DC INVENTORY
+        // =====================================================
+        // When products are delivered, they leave the DC (decrease inventory)
+        // When empties/returns are collected, they come back to DC (increase inventory)
+        // Net change = collected - delivered (positive = net return to DC)
+        // Only update if route has a DC assigned
+        if (dcId) {
+            for (const item of items) {
+                const qtyDelivered = parseInt(item.quantity_delivered) || 0;
+                const qtyCollected = parseInt(item.quantity_collected) || 0;
+                
+                // Skip if no movement
+                if (qtyDelivered === 0 && qtyCollected === 0) continue;
+                
+                // Net adjustment: collected goes back to DC (+), delivered leaves DC (-)
+                const netAdjustment = qtyCollected - qtyDelivered;
+                
+                // Update DC inventory (upsert - create if doesn't exist)
+                await query(
+                    `INSERT INTO dc_inventory (company_id, dc_id, product_id, quantity_on_hand, last_depleted_at, last_restocked_at)
+                     VALUES ($1, $2, $3, GREATEST(0, $4), 
+                             CASE WHEN $4 < 0 THEN NOW() ELSE NULL END,
+                             CASE WHEN $4 > 0 THEN NOW() ELSE NULL END)
+                     ON CONFLICT (dc_id, product_id) 
+                     DO UPDATE SET 
+                        quantity_on_hand = GREATEST(0, dc_inventory.quantity_on_hand + $4),
+                        last_depleted_at = CASE WHEN $4 < 0 THEN NOW() ELSE dc_inventory.last_depleted_at END,
+                        last_restocked_at = CASE WHEN $4 > 0 THEN NOW() ELSE dc_inventory.last_restocked_at END,
+                        updated_at = NOW()`,
+                    [companyId, dcId, item.product_id, netAdjustment]
+                );
+            }
+        }
 
         // Update run stats
         await updateRunStats(runId);
@@ -1717,13 +1753,45 @@ async function updateRunStats(runId) {
 }
 
 // =====================================================
-// OPTIMIZE STOPS
+// OPTIMIZE STOPS - Main Route Optimization Entry Point
 // =====================================================
-
+/**
+ * Optimizes the order of customer stops for a delivery route.
+ * 
+ * This function takes a list of customer IDs and a distribution center,
+ * then determines the most efficient order to visit all customers,
+ * starting and ending at the DC.
+ * 
+ * OPTIMIZATION STRATEGY:
+ * 1. Primary: Google Directions API (if available and ≤25 stops)
+ *    - Uses real road networks and traffic data
+ *    - Returns actual driving distances and times
+ *    - Provides route polyline for map display
+ * 
+ * 2. Fallback: Advanced Local Optimization (for >25 stops or API failure)
+ *    - Priority-aware Nearest Neighbor initial solution
+ *    - 2-opt improvement (eliminates route crossings)
+ *    - Or-opt improvement (relocates stop sequences)
+ *    - Uses Haversine formula for straight-line distances
+ * 
+ * @param {string} companyId - The tenant company ID
+ * @param {object} event - HTTP event containing:
+ *   - dc_id: Distribution center UUID (required)
+ *   - customer_ids: Array of customer UUIDs to route (required, min 2)
+ *   - use_google: Whether to try Google API first (default: true)
+ *   - priority_weight: Balance between distance vs urgency 0-1 (default: 0.25)
+ * 
+ * @returns {object} Optimized route with:
+ *   - stops: Ordered array of stop details with distances/times
+ *   - summary: Total miles, times, priority counts
+ *   - optimization_method: 'google_directions' or 'advanced_local'
+ *   - polyline: Encoded route path (Google only)
+ */
 async function optimizeStops(companyId, event) {
     const body = parseBody(event);
     const { dc_id, customer_ids, use_google = true } = body;
 
+    // --- Input Validation ---
     if (!dc_id) {
         return error('Distribution center required', 400);
     }
@@ -1732,7 +1800,7 @@ async function optimizeStops(companyId, event) {
         return error('At least 2 customers required', 400);
     }
 
-    // Get DC location
+    // --- Fetch Distribution Center (Route Origin/Destination) ---
     const dcResult = await query(
         'SELECT id, name, lat, lng FROM distribution_centers WHERE id = $1 AND company_id = $2',
         [dc_id, companyId]
@@ -1742,7 +1810,8 @@ async function optimizeStops(companyId, event) {
     }
     const dc = dcResult.rows[0];
 
-    // Get customer locations
+    // --- Fetch Customer Locations ---
+    // Only include customers with valid GPS coordinates
     const customersResult = await query(
         `SELECT id, name, lat, lng, address, city, state, tank_size, current_level 
          FROM customers WHERE id = ANY($1) AND company_id = $2 AND lat IS NOT NULL`,
@@ -1756,40 +1825,53 @@ async function optimizeStops(companyId, event) {
     const customers = customersResult.rows;
     const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
+    // --- Initialize Result Variables ---
     let optimizedStops = [];
     let totalMiles = 0;
     let totalDriveMinutes = 0;
     let method = 'haversine';
     let polyline = null;
 
-    // Try Google Directions API optimization (best for <= 25 waypoints)
+    // =========================================================
+    // STRATEGY 1: Google Directions API Optimization
+    // =========================================================
+    // Google's API uses actual road networks, real-time traffic,
+    // and sophisticated algorithms. It's the gold standard but:
+    // - Limited to 25 waypoints per request
+    // - Requires API key with billing enabled
+    // - Costs money per request
+    // 
+    // The 'optimize:true' parameter tells Google to find the
+    // optimal waypoint order (traveling salesman solution).
+    // =========================================================
     if (use_google && GOOGLE_MAPS_API_KEY && customers.length <= 25) {
         try {
+            // Build waypoint string: "lat1,lng1|lat2,lng2|..."
             const waypointStr = customers.map(c => `${c.lat},${c.lng}`).join('|');
-            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${dc.lat},${dc.lng}&destination=${dc.lat},${dc.lng}&waypoints=optimize:true|${encodeURIComponent(waypointStr)}&key=${GOOGLE_MAPS_API_KEY}`;
             
+            // API URL with round-trip (DC → stops → DC)
+            // optimize:true = Google finds best order
+            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${dc.lat},${dc.lng}&destination=${dc.lat},${dc.lng}&waypoints=optimize:true|${encodeURIComponent(waypointStr)}&key=${GOOGLE_MAPS_API_KEY}`;
             
             const response = await fetch(url);
             const data = await response.json();
-            
-            
-            
-            if (data.routes?.[0]) {
-                
-                
-            }
 
             if (data.status === 'OK' && data.routes[0]) {
                 const route = data.routes[0];
+                
+                // waypoint_order tells us Google's optimized sequence
+                // e.g., [2, 0, 1] means: visit customer[2] first, then [0], then [1]
                 const optimizedOrder = route.waypoint_order;
                 
-                // Calculate totals from legs
+                // Sum up distances and times from each leg
+                // legs[0] = DC to first stop
+                // legs[n] = last stop back to DC
                 for (const leg of route.legs) {
-                    totalMiles += leg.distance.value * 0.000621371;
-                    totalDriveMinutes += leg.duration.value / 60;
+                    totalMiles += leg.distance.value * 0.000621371; // meters to miles
+                    totalDriveMinutes += leg.duration.value / 60;   // seconds to minutes
                 }
 
-                // Build stops in optimized order
+                // Build stops array in Google's optimized order
                 for (let i = 0; i < optimizedOrder.length; i++) {
                     const custIdx = optimizedOrder[i];
                     const cust = customers[custIdx];
@@ -1812,26 +1894,45 @@ async function optimizeStops(companyId, event) {
                 }
 
                 method = 'google_directions';
-                polyline = route.overview_polyline?.points;
+                polyline = route.overview_polyline?.points; // Encoded path for map display
                 
                 console.log(`Google optimization: ${customers.length} stops, ${totalMiles.toFixed(1)} miles, ${totalDriveMinutes.toFixed(0)} min`);
                 
             }
         } catch (err) {
             console.error('Google Directions API error:', err);
+            // Fall through to local optimization
         }
     }
 
-    // Fallback to local optimization with advanced algorithms
+    // =========================================================
+    // STRATEGY 2: Advanced Local Optimization (Fallback)
+    // =========================================================
+    // Used when:
+    // - Google API unavailable or failed
+    // - More than 25 stops (Google's limit)
+    // - use_google explicitly set to false
+    //
+    // Algorithm pipeline:
+    // 1. Nearest Neighbor with Priority: Build initial route
+    //    - Balances proximity with delivery urgency
+    //    - Urgent customers (low tank + large tank) get priority
+    // 2. 2-opt Improvement: Remove route crossings
+    //    - Iteratively reverses segments to shorten total distance
+    // 3. Or-opt Improvement: Relocate sequences
+    //    - Moves groups of 1-3 consecutive stops to better positions
+    // =========================================================
     if (optimizedStops.length === 0) {
         const depot = { lat: parseFloat(dc.lat), lng: parseFloat(dc.lng) };
         
-        // Use advanced optimization with priority awareness, 2-opt, and or-opt
-        const priorityWeight = body.priority_weight || 0.25; // Balance between distance and urgency
+        // priority_weight: 0 = pure distance, 1 = pure urgency, 0.25 = balanced
+        const priorityWeight = body.priority_weight || 0.25;
+        
+        // Run the advanced optimization pipeline
         const optimized = optimizeRouteAdvanced(customers, depot, {
             priorityWeight,
-            use2Opt: true,
-            useOrOpt: customers.length >= 4
+            use2Opt: true,                      // Always use 2-opt improvement
+            useOrOpt: customers.length >= 4     // Or-opt needs at least 4 stops
         });
         
         let prevLat = depot.lat;
@@ -1913,43 +2014,135 @@ async function optimizeStops(companyId, event) {
     });
 }
 
-// Haversine distance in miles
+// =====================================================
+// HAVERSINE DISTANCE FORMULA
+// =====================================================
+/**
+ * Calculates the great-circle distance between two GPS points.
+ * 
+ * The Haversine formula determines the shortest distance over the 
+ * Earth's surface between two points specified by latitude/longitude.
+ * This is a straight-line "as the crow flies" distance, not driving distance.
+ * 
+ * Used when Google Directions API is unavailable. The actual driving
+ * distance is typically 20-40% longer due to roads not being straight.
+ * 
+ * @param {number} lat1 - Latitude of first point in degrees
+ * @param {number} lng1 - Longitude of first point in degrees  
+ * @param {number} lat2 - Latitude of second point in degrees
+ * @param {number} lng2 - Longitude of second point in degrees
+ * @returns {number} Distance in miles
+ * 
+ * @example
+ * haversineDistance(34.72, -86.58, 34.73, -86.59) // ~0.87 miles
+ */
 function haversineDistance(lat1, lng1, lat2, lng2) {
-    const R = 3959;
+    const R = 3959; // Earth's radius in miles (use 6371 for kilometers)
+    
+    // Convert degree differences to radians
     const dLat = toRad(lat2 - lat1);
     const dLng = toRad(lng2 - lng1);
+    
+    // Haversine formula components
+    // a = sin²(Δlat/2) + cos(lat1) * cos(lat2) * sin²(Δlng/2)
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
               Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
               Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    
+    // c = 2 * atan2(√a, √(1−a)) - angular distance in radians
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    
+    // Distance = radius × angular distance
     return R * c;
 }
 
+/**
+ * Converts degrees to radians (helper for Haversine formula)
+ */
 function toRad(deg) {
     return deg * (Math.PI / 180);
 }
 
-// Calculate urgency score for a customer (higher = more urgent)
+// =====================================================
+// DELIVERY URGENCY CALCULATOR
+// =====================================================
+/**
+ * Calculates a priority score for a customer delivery.
+ * Higher scores = more urgent, should be delivered sooner.
+ * 
+ * URGENCY FACTORS:
+ * 1. Tank Level (primary factor)
+ *    - Lower tank = higher urgency
+ *    - 0% tank = 100 base urgency
+ *    - 100% tank = 0 base urgency
+ * 
+ * 2. Critical Level Boost
+ *    - ≤10% tank: +50 urgency (CRITICAL - may run out today)
+ *    - ≤20% tank: +30 urgency (HIGH - may run out this week)
+ *    - ≤30% tank: +15 urgency (MEDIUM - schedule soon)
+ * 
+ * 3. Tank Size Bonus
+ *    - ≥1000 gal: +10 urgency (large customers use more daily)
+ *    - ≥500 gal: +5 urgency
+ * 
+ * SCORE RANGES:
+ * - 0-30: Low priority (green) - tank is healthy
+ * - 31-50: Medium priority - schedule in regular rotation
+ * - 51-80: High priority (amber) - deliver soon
+ * - 81+: Critical priority (red) - deliver today
+ * 
+ * @param {object} customer - Customer object with current_level and tank_size
+ * @returns {number} Urgency score (0-160+ range, higher = more urgent)
+ * 
+ * @example
+ * calculateUrgency({ current_level: 15, tank_size: 1000 }) // 115 (critical)
+ * calculateUrgency({ current_level: 80, tank_size: 250 })  // 20 (low)
+ */
 function calculateUrgency(customer) {
-    const level = parseFloat(customer.current_level) || 50;
-    const tankSize = parseFloat(customer.tank_size) || 500;
+    const level = parseFloat(customer.current_level) || 50;  // Default 50% if unknown
+    const tankSize = parseFloat(customer.tank_size) || 500;  // Default 500 gal
     
-    // Base urgency from tank level (0-100 scale, inverted)
+    // Base urgency: inverse of tank level (empty = urgent)
     let urgency = 100 - level;
     
-    // Critical urgency boost for very low tanks
-    if (level <= 10) urgency += 50;
-    else if (level <= 20) urgency += 30;
-    else if (level <= 30) urgency += 15;
+    // Critical urgency boost for dangerously low tanks
+    if (level <= 10) urgency += 50;       // CRITICAL: Could run out today
+    else if (level <= 20) urgency += 30;  // HIGH: Could run out this week
+    else if (level <= 30) urgency += 15;  // MEDIUM: Getting low
     
-    // Larger tanks = more urgent (they use more)
+    // Larger tanks consume more fuel per day, so prioritize them
     if (tankSize >= 1000) urgency += 10;
     else if (tankSize >= 500) urgency += 5;
     
     return urgency;
 }
 
-// Build distance matrix for a set of locations
+// =====================================================
+// DISTANCE MATRIX BUILDER
+// =====================================================
+/**
+ * Creates an NxN matrix of distances between all location pairs.
+ * 
+ * This precomputes all pairwise distances once, so optimization
+ * algorithms can look up distances in O(1) instead of recalculating.
+ * 
+ * Matrix structure:
+ *   matrix[i][j] = distance from location i to location j
+ *   matrix[i][i] = 0 (distance to self)
+ *   matrix[i][j] = matrix[j][i] (symmetric)
+ * 
+ * Location format:
+ *   locations[0] = depot (DC)
+ *   locations[1..n] = customers
+ * 
+ * @param {Array} locations - Array of {lat, lng} objects
+ * @returns {Array<Array<number>>} NxN distance matrix in miles
+ * 
+ * @example
+ * const matrix = buildDistanceMatrix([dc, cust1, cust2, cust3]);
+ * matrix[0][1] // Distance from DC to customer 1
+ * matrix[1][2] // Distance from customer 1 to customer 2
+ */
 function buildDistanceMatrix(locations) {
     const n = locations.length;
     const matrix = [];
@@ -1969,7 +2162,16 @@ function buildDistanceMatrix(locations) {
     return matrix;
 }
 
-// Calculate total route distance
+// =====================================================
+// ROUTE DISTANCE CALCULATOR
+// =====================================================
+/**
+ * Calculates total distance of a route using precomputed distance matrix.
+ * 
+ * @param {Array<number>} route - Array of location indices representing visit order
+ * @param {Array<Array<number>>} matrix - Precomputed distance matrix
+ * @returns {number} Total route distance in miles
+ */
 function calculateRouteDistance(route, matrix) {
     let total = 0;
     for (let i = 0; i < route.length - 1; i++) {
@@ -1978,29 +2180,66 @@ function calculateRouteDistance(route, matrix) {
     return total;
 }
 
-// 2-opt improvement - reverses segments to reduce crossings
+// =====================================================
+// 2-OPT IMPROVEMENT ALGORITHM
+// =====================================================
+/**
+ * Improves a route by eliminating crossing paths.
+ * 
+ * The 2-opt algorithm is a local search technique that iteratively
+ * improves a route by reversing segments. It's particularly good at
+ * removing "crossed" paths where the route intersects itself.
+ * 
+ * HOW IT WORKS:
+ * For each pair of edges (A→B) and (C→D), check if reconnecting
+ * as (A→C) and (B→D) with the middle segment reversed is shorter.
+ * 
+ * BEFORE:  A → B → ... → C → D
+ *          (edges cross)
+ * 
+ * AFTER:   A → C → ... → B → D
+ *          (segment B...C is reversed)
+ * 
+ * TIME COMPLEXITY: O(n² × iterations)
+ * SPACE COMPLEXITY: O(n)
+ * 
+ * @param {Array<number>} route - Initial route as location indices [depot, c1, c2, ..., depot]
+ * @param {Array<Array<number>>} matrix - Distance matrix
+ * @param {number} maxIterations - Max improvement passes (default: 500)
+ * @returns {Array<number>} Improved route
+ * 
+ * @example
+ * // Route: DC → A → B → C → D → DC with crossing A→B and C→D
+ * // 2-opt reverses B→C segment: DC → A → C → B → D → DC
+ */
 function twoOptImprove(route, matrix, maxIterations = 500) {
     let improved = true;
     let iterations = 0;
     let bestRoute = [...route];
     
+    // Keep improving until no more improvements found or max iterations
     while (improved && iterations < maxIterations) {
         improved = false;
         iterations++;
         
+        // Try all pairs of edges (skip depot edges at start/end)
         for (let i = 1; i < bestRoute.length - 2; i++) {
             for (let j = i + 1; j < bestRoute.length - 1; j++) {
-                // Calculate improvement from reversing segment [i, j]
-                const a = bestRoute[i - 1];
-                const b = bestRoute[i];
-                const c = bestRoute[j];
-                const d = bestRoute[j + 1];
+                // Current edges: (i-1 → i) and (j → j+1)
+                // Proposed: (i-1 → j) and (i → j+1) with reversal
+                const a = bestRoute[i - 1];  // Before first edge
+                const b = bestRoute[i];       // Start of segment
+                const c = bestRoute[j];       // End of segment
+                const d = bestRoute[j + 1];   // After second edge
                 
+                // Current cost: edge (a→b) + edge (c→d)
                 const currentDist = matrix[a][b] + matrix[c][d];
+                // New cost after reversal: edge (a→c) + edge (b→d)
                 const newDist = matrix[a][c] + matrix[b][d];
                 
+                // If reversal saves distance (with small epsilon for float precision)
                 if (newDist < currentDist - 0.01) {
-                    // Reverse the segment
+                    // Reverse the segment between i and j (inclusive)
                     const newRoute = bestRoute.slice(0, i);
                     const reversed = bestRoute.slice(i, j + 1).reverse();
                     const rest = bestRoute.slice(j + 1);
@@ -2014,7 +2253,40 @@ function twoOptImprove(route, matrix, maxIterations = 500) {
     return bestRoute;
 }
 
-// Or-opt improvement - moves sequences of 1-3 stops to better positions
+// =====================================================
+// OR-OPT IMPROVEMENT ALGORITHM
+// =====================================================
+/**
+ * Improves a route by relocating sequences of consecutive stops.
+ * 
+ * Or-opt (Or-exchange) is complementary to 2-opt. While 2-opt reverses
+ * segments, Or-opt moves sequences of 1, 2, or 3 consecutive stops
+ * to different positions in the route.
+ * 
+ * HOW IT WORKS:
+ * For each sequence of k consecutive stops (k = 1, 2, 3):
+ *   1. Calculate cost to remove the sequence from current position
+ *   2. Try inserting it at every other position
+ *   3. If total cost is reduced, perform the move
+ * 
+ * EXAMPLE (moving a single stop):
+ * BEFORE: DC → A → B → C → D → DC
+ *         (B is far from A and C)
+ * AFTER:  DC → A → C → B → D → DC
+ *         (B moved to between C and D where it fits better)
+ * 
+ * WHY SEQUENCES OF 1-3:
+ * - Moving more than 3 stops is unlikely to improve the route
+ * - Computational cost increases significantly with longer sequences
+ * - 2-opt handles larger segment rearrangements better
+ * 
+ * TIME COMPLEXITY: O(n³) per iteration
+ * Best used after 2-opt on routes with 4+ stops
+ * 
+ * @param {Array<number>} route - Route as location indices
+ * @param {Array<Array<number>>} matrix - Distance matrix
+ * @returns {Array<number>} Improved route
+ */
 function orOptImprove(route, matrix) {
     let improved = true;
     let bestRoute = [...route];
@@ -2024,35 +2296,44 @@ function orOptImprove(route, matrix) {
         
         // Try moving sequences of 1, 2, or 3 consecutive stops
         for (let seqLen = 1; seqLen <= 3; seqLen++) {
+            // i = start index of the sequence to move (skip depot at index 0)
             for (let i = 1; i < bestRoute.length - seqLen - 1; i++) {
+                // j = position to insert the sequence (skip depot and overlapping positions)
                 for (let j = 1; j < bestRoute.length - 1; j++) {
-                    if (j >= i - 1 && j <= i + seqLen) continue; // Skip overlapping positions
+                    // Skip if j is within or adjacent to the sequence being moved
+                    if (j >= i - 1 && j <= i + seqLen) continue;
                     
-                    // Calculate current cost of sequence at position i
-                    const before = bestRoute[i - 1];
-                    const seqStart = bestRoute[i];
-                    const seqEnd = bestRoute[i + seqLen - 1];
-                    const after = bestRoute[i + seqLen];
+                    // === Calculate cost of REMOVING sequence from position i ===
+                    const before = bestRoute[i - 1];           // Stop before sequence
+                    const seqStart = bestRoute[i];             // First stop in sequence
+                    const seqEnd = bestRoute[i + seqLen - 1];  // Last stop in sequence
+                    const after = bestRoute[i + seqLen];       // Stop after sequence
                     
+                    // Current cost: edges into and out of sequence
                     const currentCost = matrix[before][seqStart] + matrix[seqEnd][after];
                     
-                    // Calculate new cost if sequence moved to position j
+                    // === Calculate cost of INSERTING sequence at position j ===
                     const insertBefore = bestRoute[j];
                     const insertAfter = bestRoute[j + 1];
                     
-                    // Cost to remove sequence
+                    // Cost to remove sequence (saves currentCost, adds before→after edge)
                     const removeCost = -currentCost + matrix[before][after];
                     
-                    // Cost to insert sequence
-                    const insertCost = matrix[insertBefore][seqStart] + matrix[seqEnd][insertAfter] - matrix[insertBefore][insertAfter];
+                    // Cost to insert sequence (adds new edges, removes old edge)
+                    const insertCost = matrix[insertBefore][seqStart] + 
+                                       matrix[seqEnd][insertAfter] - 
+                                       matrix[insertBefore][insertAfter];
                     
+                    // If net cost is negative (saves distance), perform the move
                     if (removeCost + insertCost < -0.01) {
-                        // Move the sequence
+                        // Remove the sequence from its current position
                         const seq = bestRoute.splice(i, seqLen);
+                        // Adjust insertion index if it was after the removal point
                         const newJ = j > i ? j - seqLen : j;
+                        // Insert the sequence at the new position
                         bestRoute.splice(newJ + 1, 0, ...seq);
                         improved = true;
-                        break;
+                        break;  // Restart from the beginning after making a change
                     }
                 }
                 if (improved) break;
@@ -2064,8 +2345,45 @@ function orOptImprove(route, matrix) {
     return bestRoute;
 }
 
-// Nearest Neighbor with priority awareness
+// =====================================================
+// NEAREST NEIGHBOR WITH PRIORITY AWARENESS
+// =====================================================
+/**
+ * Builds an initial route using a modified Nearest Neighbor algorithm
+ * that balances geographical proximity with delivery urgency.
+ * 
+ * STANDARD NEAREST NEIGHBOR:
+ * Always picks the closest unvisited customer. Simple but ignores
+ * business priorities - a low-tank customer far away might be more
+ * important than a full-tank customer nearby.
+ * 
+ * PRIORITY-AWARE MODIFICATION:
+ * Each candidate is scored on two factors:
+ * 1. Distance from current location (normalized to 0-1)
+ * 2. Urgency score based on tank level (normalized to 0-1)
+ * 
+ * The priorityWeight parameter controls the balance:
+ * - priorityWeight = 0: Pure nearest neighbor (ignore urgency)
+ * - priorityWeight = 1: Pure urgency (ignore distance)
+ * - priorityWeight = 0.25-0.3: Recommended balance
+ * 
+ * SCORING FORMULA:
+ * score = (1 - priorityWeight) × normalizedDistance + priorityWeight × normalizedUrgency
+ * Lower score = better choice
+ * 
+ * @param {Array} customers - Array of customer objects with lat, lng, tank data
+ * @param {object} depot - Starting location {lat, lng}
+ * @param {number} priorityWeight - Balance factor 0-1 (default: 0.3)
+ * @returns {Array} Ordered array of customers
+ * 
+ * @example
+ * // With priorityWeight = 0.25:
+ * // Customer A: 2 miles away, 80% tank (low urgency)
+ * // Customer B: 5 miles away, 10% tank (high urgency)
+ * // B might be selected first despite being farther
+ */
 function nearestNeighborWithPriority(customers, depot, priorityWeight = 0.3) {
+    // Create working array with parsed coordinates and urgency scores
     const unvisited = customers.map((c, idx) => ({
         ...c,
         idx,
@@ -2077,31 +2395,35 @@ function nearestNeighborWithPriority(customers, depot, priorityWeight = 0.3) {
     const route = [];
     let current = { lat: depot.lat, lng: depot.lng };
     
-    // Find max distance for normalization
+    // Find maximum distance for normalization (scale distances to 0-1)
     let maxDist = 0;
     for (const c of unvisited) {
         const d = haversineDistance(current.lat, current.lng, c.lat, c.lng);
         if (d > maxDist) maxDist = d;
     }
-    maxDist = maxDist || 1;
+    maxDist = maxDist || 1;  // Prevent division by zero
 
+    // Greedy selection: repeatedly pick the best unvisited customer
     while (unvisited.length > 0) {
         let bestIdx = 0;
         let bestScore = Infinity;
 
+        // Score each unvisited customer
         for (let i = 0; i < unvisited.length; i++) {
             const c = unvisited[i];
             const dist = haversineDistance(current.lat, current.lng, c.lat, c.lng);
             
-            // Normalized distance (0-1)
+            // Normalize distance to 0-1 (0 = at current location, 1 = farthest)
             const normalizedDist = dist / maxDist;
             
-            // Normalized urgency (0-1, inverted so high urgency = low score)
+            // Normalize urgency to 0-1 (inverted: 0 = most urgent, 1 = least urgent)
+            // Max urgency is ~150 (100 base + 50 critical boost)
             const normalizedUrgency = 1 - (c.urgency / 150);
             
-            // Combined score (lower is better)
-            // priorityWeight controls balance between distance and urgency
-            const score = (1 - priorityWeight) * normalizedDist + priorityWeight * normalizedUrgency;
+            // Combined score: balance distance vs urgency
+            // Lower score = better candidate
+            const score = (1 - priorityWeight) * normalizedDist + 
+                          priorityWeight * normalizedUrgency;
             
             if (score < bestScore) {
                 bestScore = score;
@@ -2109,6 +2431,7 @@ function nearestNeighborWithPriority(customers, depot, priorityWeight = 0.3) {
             }
         }
 
+        // Move best customer from unvisited to route
         const best = unvisited.splice(bestIdx, 1)[0];
         route.push(best);
         current = { lat: best.lat, lng: best.lng };
@@ -2117,36 +2440,73 @@ function nearestNeighborWithPriority(customers, depot, priorityWeight = 0.3) {
     return route;
 }
 
-// Full optimization pipeline
+// =====================================================
+// ADVANCED ROUTE OPTIMIZATION PIPELINE
+// =====================================================
+/**
+ * Master function that orchestrates the full optimization pipeline.
+ * 
+ * PIPELINE STAGES:
+ * 1. Initial Solution: Priority-aware Nearest Neighbor
+ *    - Fast O(n²) construction
+ *    - Good quality starting point
+ *    - Respects delivery urgencies
+ * 
+ * 2. 2-opt Improvement: Eliminate crossings
+ *    - Reverses segments to remove path intersections
+ *    - Up to 500 iterations
+ *    - Typically improves by 5-15%
+ * 
+ * 3. Or-opt Improvement: Relocate stops
+ *    - Moves sequences of 1-3 stops to better positions
+ *    - Only for routes with 4+ stops
+ *    - Fine-tunes the solution
+ * 
+ * TOTAL TIME COMPLEXITY: O(n³) worst case
+ * Suitable for up to ~100 stops in real-time
+ * 
+ * @param {Array} customers - Customer objects with coordinates and tank data
+ * @param {object} depot - Distribution center {lat, lng}
+ * @param {object} options - Configuration:
+ *   - priorityWeight: 0-1, balance distance vs urgency (default: 0.3)
+ *   - use2Opt: Enable 2-opt improvement (default: true)
+ *   - useOrOpt: Enable Or-opt improvement (default: true)
+ * @returns {Array} Optimized customer order
+ */
 function optimizeRouteAdvanced(customers, depot, options = {}) {
     const { priorityWeight = 0.3, use2Opt = true, useOrOpt = true } = options;
     
+    // Handle edge cases
     if (customers.length === 0) return [];
     if (customers.length === 1) return [customers[0]];
     
-    // Step 1: Build initial route with priority-aware nearest neighbor
+    // ===== STAGE 1: Build initial solution =====
     let route = nearestNeighborWithPriority(customers, depot, priorityWeight);
     
-    if (route.length < 3) return route;
+    if (route.length < 3) return route;  // Nothing to optimize
     
-    // Step 2: Build distance matrix for improvements
+    // ===== STAGE 2: Prepare for local search =====
+    // Build distance matrix: index 0 = depot, 1..n = customers
     const locations = [depot, ...route.map(c => ({ lat: parseFloat(c.lat), lng: parseFloat(c.lng) }))];
     const matrix = buildDistanceMatrix(locations);
     
-    // Convert route to indices (0 = depot, 1..n = customers)
-    let routeIndices = [0, ...route.map((_, i) => i + 1), 0]; // Start and end at depot
+    // Convert customer order to indices for matrix lookups
+    // Route: [depot, cust1, cust2, ..., custN, depot]
+    let routeIndices = [0, ...route.map((_, i) => i + 1), 0];
     
-    // Step 3: Apply 2-opt improvement
+    // ===== STAGE 3: 2-opt improvement =====
     if (use2Opt) {
         routeIndices = twoOptImprove(routeIndices, matrix);
     }
     
-    // Step 4: Apply Or-opt improvement
+    // ===== STAGE 4: Or-opt improvement =====
+    // Only beneficial for 4+ stops
     if (useOrOpt && route.length >= 4) {
         routeIndices = orOptImprove(routeIndices, matrix);
     }
     
-    // Convert back to customer objects (remove depot indices)
+    // ===== Convert back to customer objects =====
+    // Remove depot indices (0) and map remaining indices to customers
     const optimizedRoute = routeIndices
         .filter(i => i !== 0)
         .map(i => route[i - 1]);
@@ -2154,7 +2514,9 @@ function optimizeRouteAdvanced(customers, depot, options = {}) {
     return optimizedRoute;
 }
 
-// Legacy: Nearest Neighbor optimization (kept for compatibility)
+// =====================================================
+// LEGACY FUNCTIONS (kept for backwards compatibility)
+// =====================================================
 function nearestNeighborOptimize(customers, depot) {
     // Use the advanced optimizer with default settings
     return optimizeRouteAdvanced(customers, depot, { priorityWeight: 0.2 });

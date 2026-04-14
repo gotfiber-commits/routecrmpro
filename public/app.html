@@ -751,6 +751,8 @@
             const [searchedPlace, setSearchedPlace] = useState(null);
             const [showAddModal, setShowAddModal] = useState(false);
             const [addingCustomer, setAddingCustomer] = useState(false);
+            const [selectedDCForAdd, setSelectedDCForAdd] = useState(''); // DC to assign new customer to
+            const [addToRouteAfter, setAddToRouteAfter] = useState(false); // Re-optimize routes after adding
             const [weatherDC, setWeatherDC] = useState(null);
             const [dcRoutes, setDcRoutes] = useState({});
             const [selectedDCForRoutes, setSelectedDCForRoutes] = useState(null);
@@ -1065,191 +1067,6 @@
                     hasMarkers = true;
                 });
 
-                // Truck markers — show at GPS or fall back to their DC location
-                (data?.trucks || []).forEach((truck, trkIdx) => {
-                    let pos = null;
-                    let atDC = false;
-                    if (truck.current_lat && truck.current_lng) {
-                        pos = { lat: parseFloat(truck.current_lat), lng: parseFloat(truck.current_lng) };
-                    } else if (truck.dc_id && dcLookup[truck.dc_id]) {
-                        // Show at DC with slight offset so it doesn't stack perfectly
-                        const dcPos = dcLookup[truck.dc_id];
-                        pos = { lat: dcPos.lat + (trkIdx * 0.002) + 0.003, lng: dcPos.lng + 0.004 };
-                        atDC = true;
-                    }
-                    if (!pos) return;
-
-                    // Find assigned driver
-                    const assignedDriver = (data?.drivers || []).find(d => d.id === truck.assigned_driver_id);
-                    
-                    // Find active route for this truck
-                    const activeRoute = (data?.activeRoutes || data?.routes || []).find(r => 
-                        r.truck_id === truck.id && (r.status === 'in_progress' || r.status === 'scheduled')
-                    );
-
-                    const statusColor = truck.status === 'active' ? '#10B981' : truck.status === 'maintenance' ? '#F59E0B' : '#94A3B8';
-                    const isMoving = truck.current_speed && parseFloat(truck.current_speed) > 2;
-                    
-                    // Truck icon - animated if moving, different color based on route status
-                    const iconColor = activeRoute?.status === 'in_progress' ? '#6366F1' : statusColor;
-                    const marker = new google.maps.Marker({
-                        position: pos, map, title: truck.name || truck.code, zIndex: 500,
-                        icon: {
-                            url: 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="${iconColor}"><path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>`),
-                            scaledSize: new google.maps.Size(36, 36),
-                            anchor: new google.maps.Point(18, 18)
-                        }
-                    });
-
-                    // Build comprehensive info window content
-                    let infoContent = `<div style="color:#333;min-width:280px;max-width:320px;font-family:system-ui,-apple-system,sans-serif">`;
-                    
-                    // Header with truck info
-                    infoContent += `
-                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #e5e7eb">
-                            <div style="width:42px;height:42px;background:linear-gradient(135deg, ${iconColor}, ${iconColor}dd);border-radius:8px;display:flex;align-items:center;justify-content:center">
-                                <span style="font-size:1.4rem">🚚</span>
-                            </div>
-                            <div style="flex:1">
-                                <div style="font-weight:700;font-size:1rem">${truck.name || truck.code}</div>
-                                <div style="font-size:0.75rem;color:#666">${truck.make || ''} ${truck.model || ''} ${truck.year || ''}</div>
-                            </div>
-                            <div style="text-align:right">
-                                <div style="font-size:0.7rem;padding:2px 8px;border-radius:4px;font-weight:600;background:${truck.status === 'active' ? '#f0fdf4' : '#fffbeb'};color:${statusColor}">${(truck.status || 'unknown').toUpperCase()}</div>
-                            </div>
-                        </div>`;
-
-                    // Real-time GPS data if available
-                    if (truck.current_lat && truck.current_lng) {
-                        infoContent += `
-                            <div style="background:#f8fafc;padding:8px;border-radius:6px;margin-bottom:10px">
-                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                                    <span style="font-size:0.75rem;color:#64748b">📡 Live GPS</span>
-                                    ${isMoving ? '<span style="font-size:0.7rem;color:#10B981;font-weight:600">● MOVING</span>' : '<span style="font-size:0.7rem;color:#94a3b8">● STOPPED</span>'}
-                                </div>
-                                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:0.78rem">
-                                    <div style="text-align:center">
-                                        <div style="font-weight:700;color:#333">${truck.current_speed ? Math.round(truck.current_speed) + ' mph' : '0 mph'}</div>
-                                        <div style="color:#888;font-size:0.65rem">Speed</div>
-                                    </div>
-                                    <div style="text-align:center">
-                                        <div style="font-weight:700;color:#333">${truck.current_heading ? truck.current_heading + '°' : '-'}</div>
-                                        <div style="color:#888;font-size:0.65rem">Heading</div>
-                                    </div>
-                                    <div style="text-align:center">
-                                        <div style="font-weight:700;color:#333">${truck.current_odometer ? truck.current_odometer.toLocaleString() : '-'}</div>
-                                        <div style="color:#888;font-size:0.65rem">Odometer</div>
-                                    </div>
-                                </div>
-                                ${truck.last_location_update ? `<div style="font-size:0.65rem;color:#94a3b8;margin-top:4px;text-align:center">Updated: ${new Date(truck.last_location_update).toLocaleTimeString()}</div>` : ''}
-                            </div>`;
-                    } else if (atDC) {
-                        infoContent += `<div style="font-size:0.75rem;color:#888;margin-bottom:8px;padding:6px 8px;background:#f1f5f9;border-radius:4px;text-align:center">📍 Parked at Distribution Center (no GPS signal)</div>`;
-                    }
-
-                    // Truck specs
-                    infoContent += `
-                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;font-size:0.78rem">
-                            <div style="background:#f0f0f5;padding:6px;border-radius:4px;text-align:center">
-                                <div style="font-weight:700;color:#6366F1">${(truck.capacity_gallons || 0).toLocaleString()}</div>
-                                <div style="color:#888;font-size:0.65rem">Capacity (gal)</div>
-                            </div>
-                            <div style="background:#f0f5f0;padding:6px;border-radius:4px;text-align:center">
-                                <div style="font-weight:700;color:#10B981">${truck.mpg || truck.avg_mpg || '-'}</div>
-                                <div style="color:#888;font-size:0.65rem">MPG</div>
-                            </div>
-                            <div style="background:#fffbf0;padding:6px;border-radius:4px;text-align:center">
-                                <div style="font-weight:700;color:#F59E0B">${truck.license_plate || '-'}</div>
-                                <div style="color:#888;font-size:0.65rem">Plate</div>
-                            </div>
-                        </div>`;
-
-                    // Driver section
-                    if (assignedDriver) {
-                        infoContent += `
-                            <div style="background:#eff6ff;padding:10px;border-radius:6px;margin-bottom:10px">
-                                <div style="display:flex;align-items:center;gap:8px">
-                                    <div style="width:36px;height:36px;background:#3b82f6;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:0.9rem">${(assignedDriver.name || 'D').charAt(0)}</div>
-                                    <div style="flex:1">
-                                        <div style="font-weight:600;font-size:0.9rem;color:#1e40af">${assignedDriver.name}</div>
-                                        <div style="font-size:0.72rem;color:#64748b">${assignedDriver.phone || 'No phone'}</div>
-                                    </div>
-                                    <div style="text-align:right">
-                                        ${assignedDriver.hazmat_certified ? '<span style="font-size:0.65rem;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:3px;font-weight:600">HAZMAT</span>' : ''}
-                                    </div>
-                                </div>
-                                <div style="display:flex;gap:4px;margin-top:8px;font-size:0.7rem">
-                                    <span style="background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:3px">CDL: ${assignedDriver.cdl_class || '-'}</span>
-                                    <span style="background:#e0e7ff;color:#4338ca;padding:2px 6px;border-radius:3px">Exp: ${assignedDriver.years_experience || 0} yrs</span>
-                                    ${assignedDriver.tanker_endorsed ? '<span style="background:#d1fae5;color:#065f46;padding:2px 6px;border-radius:3px">Tanker</span>' : ''}
-                                </div>
-                            </div>`;
-                    } else {
-                        infoContent += `<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:10px;padding:8px;background:#f8fafc;border-radius:4px;text-align:center">👤 No driver assigned</div>`;
-                    }
-
-                    // Active route section
-                    if (activeRoute) {
-                        const progress = activeRoute.total_stops > 0 ? Math.round((activeRoute.stops_completed || 0) / activeRoute.total_stops * 100) : 0;
-                        const routeStatusColor = activeRoute.status === 'in_progress' ? '#10B981' : '#F59E0B';
-                        infoContent += `
-                            <div style="background:linear-gradient(135deg, #f0fdf4, #ecfdf5);padding:10px;border-radius:6px;margin-bottom:10px;border:1px solid #bbf7d0">
-                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                                    <span style="font-weight:700;font-size:0.85rem;color:#166534">🚀 ${activeRoute.name || 'Active Route'}</span>
-                                    <span style="font-size:0.7rem;padding:2px 8px;border-radius:4px;font-weight:600;background:${activeRoute.status === 'in_progress' ? '#dcfce7' : '#fef9c3'};color:${routeStatusColor}">${activeRoute.status === 'in_progress' ? 'IN PROGRESS' : 'SCHEDULED'}</span>
-                                </div>
-                                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:0.75rem;margin-bottom:8px">
-                                    <div style="text-align:center">
-                                        <div style="font-weight:700;color:#166534">${activeRoute.stops_completed || 0}/${activeRoute.total_stops || 0}</div>
-                                        <div style="color:#6b7280;font-size:0.65rem">Stops</div>
-                                    </div>
-                                    <div style="text-align:center">
-                                        <div style="font-weight:700;color:#166534">${activeRoute.total_gallons_delivered || 0}</div>
-                                        <div style="color:#6b7280;font-size:0.65rem">Gal Delivered</div>
-                                    </div>
-                                    <div style="text-align:center">
-                                        <div style="font-weight:700;color:#166534">$${(activeRoute.total_revenue || 0).toLocaleString()}</div>
-                                        <div style="color:#6b7280;font-size:0.65rem">Revenue</div>
-                                    </div>
-                                </div>
-                                <div style="background:#e5e7eb;height:6px;border-radius:3px;overflow:hidden">
-                                    <div style="background:linear-gradient(90deg, #22c55e, #16a34a);height:100%;width:${progress}%;transition:width 0.3s"></div>
-                                </div>
-                                <div style="font-size:0.7rem;color:#6b7280;margin-top:4px;text-align:center">${progress}% Complete</div>
-                            </div>`;
-                    } else {
-                        infoContent += `<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:10px;padding:8px;background:#f8fafc;border-radius:4px;text-align:center">📋 No active route assigned</div>`;
-                    }
-
-                    // DC info
-                    if (truck.dc_name) {
-                        infoContent += `<div style="font-size:0.8rem;color:#555;margin-bottom:10px">🏭 <strong>${truck.dc_name}</strong></div>`;
-                    }
-
-                    // Action buttons
-                    infoContent += `
-                        <div style="display:flex;gap:6px;border-top:1px solid #e5e7eb;padding-top:10px">
-                            <button id="truck-detail-btn-${trkIdx}" style="flex:1;background:#334155;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">📋 Truck</button>
-                            ${assignedDriver ? `<button id="driver-detail-btn-${trkIdx}" style="flex:1;background:#3b82f6;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">👤 Driver</button>` : ''}
-                            ${activeRoute ? `<button id="route-detail-btn-${trkIdx}" style="flex:1;background:#10B981;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">🗺️ Route</button>` : ''}
-                        </div>`;
-
-                    infoContent += `</div>`;
-
-                    const infoWindow = new google.maps.InfoWindow({ content: infoContent });
-
-                    marker.addListener('click', () => infoWindow.open(map, marker));
-                    google.maps.event.addListener(infoWindow, 'domready', () => {
-                        document.getElementById(`truck-detail-btn-${trkIdx}`)?.addEventListener('click', () => { infoWindow.close(); if (onNavigate) onNavigate('trucks'); });
-                        document.getElementById(`driver-detail-btn-${trkIdx}`)?.addEventListener('click', () => { infoWindow.close(); if (onNavigate) onNavigate('drivers'); });
-                        document.getElementById(`route-detail-btn-${trkIdx}`)?.addEventListener('click', () => { infoWindow.close(); if (onNavigate) onNavigate('active-routes'); });
-                    });
-
-                    markersRef.current.push(marker);
-                    bounds.extend(pos);
-                    hasMarkers = true;
-                });
-
                 // Customer markers
                 (data?.customers || []).slice(0, 200).forEach(cust => {
                     if (!cust.lat || !cust.lng) return;
@@ -1322,14 +1139,27 @@
                         tank_size: 500,
                         current_level: 50,
                         price_per_gallon: 2.50,
-                        payment_terms: 'net30'
+                        payment_terms: 'net30',
+                        preferred_dc_id: selectedDCForAdd || null // Assign to selected DC
                     };
-                    await api.request('/data/customers', { method: 'POST', body: JSON.stringify(customerData) });
+                    const newCustomer = await api.request('/data/customers', { method: 'POST', body: JSON.stringify(customerData) });
+                    
                     setShowAddModal(false);
                     setSearchedPlace(null);
+                    setSelectedDCForAdd('');
+                    setAddToRouteAfter(false);
                     if (searchMarkerRef.current) searchMarkerRef.current.setMap(null);
                     if (searchInputRef.current) searchInputRef.current.value = '';
                     if (onRefresh) onRefresh();
+                    
+                    // Show success message with option to view customer or generate routes
+                    if (selectedDCForAdd && addToRouteAfter) {
+                        const dc = (data?.distributionCenters || []).find(d => d.id === selectedDCForAdd);
+                        if (dc && confirm(`✅ Customer "${newCustomer.name}" added to ${dc.name}!\n\nDo you want to go to Route Generation to create optimized routes including this new customer?`)) {
+                            window._selectedDcId = selectedDCForAdd;
+                            if (onNavigate) onNavigate('route-templates');
+                        }
+                    }
                 } catch (err) {
                     alert('Error adding customer: ' + err.message);
                 } finally {
@@ -1497,9 +1327,9 @@
                     {/* Quick Add Customer Modal */}
                     {showAddModal && searchedPlace && (
                         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowAddModal(false)}>
-                            <div className="modal" style={{maxWidth:'500px'}}>
+                            <div className="modal" style={{maxWidth:'520px'}}>
                                 <div className="modal-header">
-                                    <h3>➕ Quick Add Customer</h3>
+                                    <h3>➕ Add Customer from Map</h3>
                                     <button className="modal-close" onClick={() => setShowAddModal(false)}>&times;</button>
                                 </div>
                                 <div className="modal-body">
@@ -1522,6 +1352,47 @@
                                             </div>
                                         )}
                                     </div>
+                                    
+                                    {/* DC Selection */}
+                                    <div style={{marginBottom:'1rem'}}>
+                                        <label className="form-label" style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                                            🏭 Assign to Distribution Center
+                                            <span style={{fontSize:'0.75rem',color:'var(--text-muted)'}}>(for route optimization)</span>
+                                        </label>
+                                        <select 
+                                            className="form-input" 
+                                            value={selectedDCForAdd} 
+                                            onChange={e => setSelectedDCForAdd(e.target.value)}
+                                        >
+                                            <option value="">-- No DC (assign later) --</option>
+                                            {(data?.distributionCenters || []).map(dc => (
+                                                <option key={dc.id} value={dc.id}>
+                                                    {dc.name} ({dc.city}, {dc.state})
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    
+                                    {/* Add to Route Option */}
+                                    {selectedDCForAdd && (
+                                        <div style={{marginBottom:'1rem',padding:'0.75rem',background:'rgba(16, 185, 129, 0.1)',borderRadius:'8px',border:'1px solid rgba(16, 185, 129, 0.2)'}}>
+                                            <label style={{display:'flex',alignItems:'center',gap:'0.75rem',cursor:'pointer'}}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={addToRouteAfter} 
+                                                    onChange={e => setAddToRouteAfter(e.target.checked)}
+                                                    style={{width:'18px',height:'18px'}}
+                                                />
+                                                <span style={{fontSize:'0.9rem'}}>
+                                                    <strong>🗺️ Generate optimized routes</strong> after adding
+                                                    <div style={{fontSize:'0.8rem',color:'var(--text-muted)',marginTop:'2px'}}>
+                                                        Takes you to Route Generation to create routes including this new customer
+                                                    </div>
+                                                </span>
+                                            </label>
+                                        </div>
+                                    )}
+                                    
                                     <div style={{background:'rgba(99, 102, 241, 0.1)',padding:'0.75rem',borderRadius:'8px',marginBottom:'1rem',fontSize:'0.85rem'}}>
                                         <strong>What will be created:</strong>
                                         <ul style={{margin:'0.5rem 0 0 1.25rem',padding:0}}>
@@ -1529,6 +1400,9 @@
                                             <li>Type: <strong>Commercial</strong></li>
                                             <li>Tank Size: <strong>500 gallons</strong> (default)</li>
                                             <li>Payment Terms: <strong>Net 30</strong></li>
+                                            {selectedDCForAdd && (
+                                                <li>Assigned DC: <strong>{(data?.distributionCenters || []).find(d => d.id === selectedDCForAdd)?.name || 'Selected'}</strong></li>
+                                            )}
                                         </ul>
                                     </div>
                                     <p style={{color:'var(--text-muted)',fontSize:'0.85rem',margin:0}}>
@@ -1536,7 +1410,7 @@
                                     </p>
                                 </div>
                                 <div className="modal-footer">
-                                    <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
+                                    <button className="btn btn-secondary" onClick={() => { setShowAddModal(false); setSelectedDCForAdd(''); setAddToRouteAfter(false); }}>Cancel</button>
                                     <button className="btn btn-primary" onClick={handleQuickAddCustomer} disabled={addingCustomer}>
                                         {addingCustomer ? 'Adding...' : '+ Add Customer'}
                                     </button>
@@ -2104,8 +1978,25 @@
             const [loading, setLoading] = useState(false);
             const [products, setProducts] = useState([]);
             const [viewingCustomer, setViewingCustomer] = useState(null);
+            const [dcFilter, setDcFilter] = useState(''); // Filter by DC
+            const [searchFilter, setSearchFilter] = useState(''); // Search by name/code
 
             const dcOptions = (data?.distributionCenters || []).map(dc => ({ value: dc.id, label: dc.name }));
+            
+            // Filter customers by DC and search term
+            const filteredCustomers = (data?.customers || []).filter(c => {
+                let matchesDC = true;
+                if (dcFilter === 'unassigned') {
+                    matchesDC = !c.preferred_dc_id;
+                } else if (dcFilter) {
+                    matchesDC = c.preferred_dc_id === dcFilter;
+                }
+                const matchesSearch = !searchFilter || 
+                    c.name?.toLowerCase().includes(searchFilter.toLowerCase()) ||
+                    c.code?.toLowerCase().includes(searchFilter.toLowerCase()) ||
+                    c.city?.toLowerCase().includes(searchFilter.toLowerCase());
+                return matchesDC && matchesSearch;
+            });
 
             // Auto-open customer account when navigating from map
             useEffect(() => {
@@ -2224,17 +2115,57 @@
                 <>
                     <div className="page-header">
                         <h1 className="page-title">👥 Customers</h1>
-                        <button className="btn btn-primary" onClick={() => { setEditItem(null); setShowModal(true); }}>+ Add Customer</button>
+                        <div style={{display:'flex',gap:'0.75rem',alignItems:'center',flexWrap:'wrap'}}>
+                            <input 
+                                type="text" 
+                                placeholder="🔍 Search name, code, city..." 
+                                value={searchFilter}
+                                onChange={(e) => setSearchFilter(e.target.value)}
+                                className="form-input"
+                                style={{width:'200px',fontSize:'0.9rem'}}
+                            />
+                            <select 
+                                className="form-input" 
+                                value={dcFilter} 
+                                onChange={(e) => setDcFilter(e.target.value)}
+                                style={{width:'180px',fontSize:'0.9rem'}}
+                            >
+                                <option value="">All Distribution Centers</option>
+                                {dcOptions.map(dc => (
+                                    <option key={dc.value} value={dc.value}>{dc.label}</option>
+                                ))}
+                                <option value="unassigned">⚠️ Not Assigned</option>
+                            </select>
+                            <button className="btn btn-primary" onClick={() => { setEditItem(null); setShowModal(true); }}>+ Add Customer</button>
+                        </div>
                     </div>
+                    
+                    {/* Filter summary */}
+                    {(dcFilter || searchFilter) && (
+                        <div style={{marginBottom:'1rem',padding:'0.5rem 1rem',background:'var(--bg-hover)',borderRadius:'8px',display:'flex',alignItems:'center',gap:'1rem',fontSize:'0.9rem'}}>
+                            <span>Showing <strong>{filteredCustomers.length}</strong> of {(data?.customers || []).length} customers</span>
+                            {(dcFilter || searchFilter) && (
+                                <button 
+                                    className="btn btn-sm btn-secondary" 
+                                    onClick={() => { setDcFilter(''); setSearchFilter(''); }}
+                                    style={{padding:'0.25rem 0.75rem'}}
+                                >
+                                    Clear Filters
+                                </button>
+                            )}
+                        </div>
+                    )}
+                    
                     <div className="table-container">
                         <table>
-                            <thead><tr><th>Code</th><th>Name</th><th>City</th><th>Type</th><th>Tank</th><th>Level</th><th>Status</th><th>Actions</th></tr></thead>
+                            <thead><tr><th>Code</th><th>Name</th><th>City</th><th>DC</th><th>Type</th><th>Tank</th><th>Level</th><th>Status</th><th>Actions</th></tr></thead>
                             <tbody>
-                                {(data?.customers || []).map(item => (
+                                {filteredCustomers.map(item => (
                                     <tr key={item.id}>
                                         <td><strong style={{color:'var(--primary)',cursor:'pointer'}} onClick={() => setViewingCustomer(item)}>{item.code}</strong></td>
                                         <td>{item.name}<br/><span className="text-muted" style={{fontSize:'0.85rem'}}>{item.contact_name}</span></td>
                                         <td>{item.city}, {item.state}</td>
+                                        <td>{item.dc_name ? <span style={{background:'var(--bg-hover)',padding:'2px 8px',borderRadius:'4px',fontSize:'0.8rem'}}>{item.dc_name}</span> : <span className="text-muted">—</span>}</td>
                                         <td style={{textTransform:'capitalize'}}>{item.customer_type}</td>
                                         <td>{item.tank_size} gal</td>
                                         <td style={{color: item.current_level < 25 ? 'var(--danger)' : item.current_level < 50 ? 'var(--warning)' : 'var(--success)', fontWeight:'600'}}>{item.current_level}%</td>
@@ -2248,8 +2179,10 @@
                                         </td>
                                     </tr>
                                 ))}
-                                {(!data?.customers || data.customers.length === 0) && (
-                                    <tr><td colSpan="8" className="empty-state">No customers yet. Click "Add Customer" to create one.</td></tr>
+                                {filteredCustomers.length === 0 && (
+                                    <tr><td colSpan="9" className="empty-state">
+                                        {(dcFilter || searchFilter) ? 'No customers match your filters.' : 'No customers yet. Click "Add Customer" to create one.'}
+                                    </td></tr>
                                 )}
                             </tbody>
                         </table>
@@ -2763,6 +2696,7 @@
                                                     <div>
                                                         <div className="info-row"><span className="info-label">Address</span><span className="info-value">{customer.address}</span></div>
                                                         <div className="info-row"><span className="info-label">City/State</span><span className="info-value">{customer.city}, {customer.state} {customer.zip}</span></div>
+                                                        <div className="info-row"><span className="info-label">Distribution Center</span><span className="info-value">{customer.dc_name || <span style={{color:'var(--text-muted)'}}>Not assigned</span>}</span></div>
                                                         <div className="info-row"><span className="info-label">Payment Terms</span><span className="info-value" style={{textTransform:'capitalize'}}>{(customer.payment_terms || 'net30').replace('_', ' ')}</span></div>
                                                         <div className="info-row"><span className="info-label">Last Delivery</span><span className="info-value">{formatDate(customer.last_delivery_date)}</span></div>
                                                     </div>
@@ -3103,8 +3037,54 @@
                 }
             }, [selectedDC, dcCustomers.length, generatedRoutes.length]);
 
-            // Generate optimized routes
+            // =====================================================
+            // ROUTE GENERATION - FRONTEND ORCHESTRATION
+            // =====================================================
+            /**
+             * Generates optimized delivery routes for the selected DC.
+             * 
+             * OVERVIEW:
+             * This function orchestrates route creation by:
+             * 1. Fetching customers assigned to the selected DC
+             * 2. Geographically clustering customers using bearing angles
+             * 3. Splitting clusters into manageable route sizes
+             * 4. Sending each cluster to backend for stop-order optimization
+             * 
+             * GEOGRAPHIC CLUSTERING ALGORITHM:
+             * Rather than randomly dividing customers, we use a "pie slice"
+             * approach based on compass bearing from the DC:
+             * 
+             *                    N (0°)
+             *                     |
+             *             NW      |      NE
+             *               \     |     /
+             *                \    |    /
+             *                 \   |   /
+             *          W ------[ DC ]------ E (90°)
+             *                 /   |   \
+             *                /    |    \
+             *               /     |     \
+             *             SW      |      SE
+             *                     |
+             *                    S (180°)
+             * 
+             * Customers are sorted by their bearing angle, then divided into
+             * equal chunks. This ensures each route covers a contiguous
+             * geographic area, minimizing backtracking between routes.
+             * 
+             * WHY BEARING-BASED CLUSTERING:
+             * - Reduces inter-route travel (trucks don't cross paths)
+             * - Creates logical "territories" for each route
+             * - Works well for radial service areas common in delivery
+             * - Simple O(n log n) complexity (just sorting)
+             * 
+             * BACKEND HANDOFF:
+             * Each geographic cluster is sent to POST /routes-v2/optimize
+             * which applies TSP algorithms (Google or local) to find the
+             * optimal stop order within that cluster.
+             */
             const handleGenerateRoutes = async () => {
+                // --- Input Validation ---
                 if (!selectedDC) {
                     setError('Please select a distribution center');
                     return;
@@ -3117,38 +3097,48 @@
                     return;
                 }
 
+                // --- Reset UI State ---
                 setGenerating(true);
                 setError('');
                 setGeneratedRoutes([]);
                 setSelectedRoute(null);
-                setActivatedRoutes([]); // Reset activated routes
+                setActivatedRoutes([]);
 
                 try {
                     const dc = dcs.find(d => d.id === selectedDC);
                     
                     // ============================================
-                    // GEOGRAPHIC CLUSTERING - Group nearby customers
+                    // STEP 1: GEOGRAPHIC CLUSTERING
+                    // Calculate bearing (compass direction) from DC to each customer
+                    // This creates "pie slices" radiating outward from the DC
                     // ============================================
                     
-                    // Step 1: Calculate bearing (direction) from DC to each customer
-                    // This creates "pie slices" radiating from the DC
                     const dcLat = parseFloat(dc.lat);
                     const dcLng = parseFloat(dc.lng);
                     
+                    // For each customer, calculate:
+                    // - Bearing: Compass direction from DC (0°=N, 90°=E, 180°=S, 270°=W)
+                    // - Distance: Straight-line distance from DC in miles
                     const customersWithBearing = customersToRoute.map(c => {
                         const custLat = parseFloat(c.lat);
                         const custLng = parseFloat(c.lng);
                         
-                        // Calculate bearing from DC to customer (0-360 degrees)
-                        const dLng = (custLng - dcLng) * Math.PI / 180;
-                        const lat1 = dcLat * Math.PI / 180;
-                        const lat2 = custLat * Math.PI / 180;
+                        // --- BEARING CALCULATION (Forward Azimuth) ---
+                        // Uses spherical trigonometry to find initial compass heading
+                        // from DC to customer along a great circle path
+                        const dLng = (custLng - dcLng) * Math.PI / 180;  // Δlongitude in radians
+                        const lat1 = dcLat * Math.PI / 180;              // DC latitude in radians
+                        const lat2 = custLat * Math.PI / 180;            // Customer lat in radians
+                        
+                        // Formula: bearing = atan2(sin(Δlng)×cos(lat2), 
+                        //                         cos(lat1)×sin(lat2) - sin(lat1)×cos(lat2)×cos(Δlng))
                         const y = Math.sin(dLng) * Math.cos(lat2);
                         const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
                         let bearing = Math.atan2(y, x) * 180 / Math.PI;
-                        bearing = (bearing + 360) % 360; // Normalize to 0-360
+                        bearing = (bearing + 360) % 360; // Normalize from [-180,180] to [0,360]
                         
-                        // Calculate distance from DC
+                        // --- DISTANCE CALCULATION (Haversine Formula) ---
+                        // Straight-line distance over Earth's surface
                         const R = 3959; // Earth radius in miles
                         const dLat = (custLat - dcLat) * Math.PI / 180;
                         const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
@@ -3159,38 +3149,51 @@
                         return { ...c, bearing, distance };
                     });
                     
-                    // Step 2: Sort by bearing (clockwise from north)
-                    // This groups customers by direction from the DC
+                    // ============================================
+                    // STEP 2: SORT BY BEARING (Clockwise from North)
+                    // This arranges customers in a circular sweep around the DC
+                    // Adjacent customers in the sorted array are geographically adjacent
+                    // ============================================
                     customersWithBearing.sort((a, b) => a.bearing - b.bearing);
                     
-                    // Step 3: Split into geographic chunks
-                    // Customers are now sorted by direction, so sequential chunks = geographic areas
+                    // ============================================
+                    // STEP 3: SPLIT INTO ROUTE CHUNKS
+                    // Divide the sorted array into chunks of maxStopsPerRoute
+                    // Since customers are sorted by bearing, each chunk
+                    // represents a contiguous "wedge" of the service area
+                    // ============================================
                     const numRoutes = Math.ceil(customersWithBearing.length / maxStopsPerRoute);
                     const customerChunks = [];
                     
                     if (numRoutes === 1) {
-                        // Single route - just use all customers
+                        // Single route - all customers fit in one route
                         customerChunks.push(customersWithBearing);
                     } else {
-                        // Multiple routes - divide the "pie" evenly
+                        // Multiple routes - divide into equal-ish geographic wedges
                         const stopsPerRoute = Math.ceil(customersWithBearing.length / numRoutes);
                         for (let i = 0; i < customersWithBearing.length; i += stopsPerRoute) {
                             customerChunks.push(customersWithBearing.slice(i, i + stopsPerRoute));
                         }
                     }
 
+                    // ============================================
+                    // STEP 4: OPTIMIZE EACH CHUNK
+                    // Send each geographic cluster to the backend for
+                    // stop-order optimization using TSP algorithms
+                    // ============================================
                     const routes = [];
                     
                     for (let i = 0; i < customerChunks.length; i++) {
                         const chunk = customerChunks[i];
                         
-                        // Optimize this geographic chunk
+                        // Call backend optimization API for this chunk
+                        // Backend uses Google Directions or local algorithms
                         const result = await api.request('/routes-v2/optimize', {
                             method: 'POST',
                             body: JSON.stringify({
                                 dc_id: selectedDC,
                                 customer_ids: chunk.map(c => c.id),
-                                use_google: true
+                                use_google: true  // Try Google first, falls back to local
                             })
                         });
 
@@ -6802,6 +6805,17 @@
             const [editItem, setEditItem] = useState(null);
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState('');
+            
+            // DC Inventory state
+            const [showInventoryModal, setShowInventoryModal] = useState(false);
+            const [inventoryDC, setInventoryDC] = useState(null);
+            const [dcInventory, setDcInventory] = useState([]);
+            const [inventoryLoading, setInventoryLoading] = useState(false);
+            const [showAddProduct, setShowAddProduct] = useState(false);
+            const [newProductId, setNewProductId] = useState('');
+            const [newQty, setNewQty] = useState(0);
+            const [newReorder, setNewReorder] = useState(0);
+            const [newMaxCap, setNewMaxCap] = useState(0);
 
             const fields = [
                 { type: 'row', fields: [
@@ -6849,6 +6863,92 @@
                     alert('Error deleting: ' + err.message);
                 }
             };
+            
+            // Load DC inventory
+            const loadInventory = async (dc) => {
+                setInventoryDC(dc);
+                setShowInventoryModal(true);
+                setInventoryLoading(true);
+                try {
+                    const result = await api.request(`/data/distribution-centers/${dc.id}/inventory`);
+                    setDcInventory(result || []);
+                } catch (err) {
+                    console.error('Failed to load inventory:', err);
+                    setDcInventory([]);
+                } finally {
+                    setInventoryLoading(false);
+                }
+            };
+            
+            // Add product to DC inventory
+            const handleAddInventory = async () => {
+                if (!newProductId) return;
+                try {
+                    await api.request(`/data/distribution-centers/${inventoryDC.id}/inventory`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            product_id: newProductId,
+                            quantity_on_hand: parseInt(newQty) || 0,
+                            reorder_level: parseInt(newReorder) || 0,
+                            max_capacity: parseInt(newMaxCap) || 0
+                        })
+                    });
+                    setShowAddProduct(false);
+                    setNewProductId('');
+                    setNewQty(0);
+                    setNewReorder(0);
+                    setNewMaxCap(0);
+                    loadInventory(inventoryDC);
+                } catch (err) {
+                    alert('Error adding inventory: ' + err.message);
+                }
+            };
+            
+            // Update inventory quantity
+            const handleUpdateQty = async (productId, adjustment) => {
+                try {
+                    await api.request(`/data/distribution-centers/${inventoryDC.id}/inventory/${productId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ adjustment })
+                    });
+                    loadInventory(inventoryDC);
+                } catch (err) {
+                    alert('Error updating inventory: ' + err.message);
+                }
+            };
+            
+            // Set exact quantity
+            const handleSetQty = async (productId, newQty) => {
+                const qty = prompt('Enter new quantity on hand:', newQty);
+                if (qty === null) return;
+                try {
+                    await api.request(`/data/distribution-centers/${inventoryDC.id}/inventory/${productId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ quantity_on_hand: parseInt(qty) || 0 })
+                    });
+                    loadInventory(inventoryDC);
+                } catch (err) {
+                    alert('Error updating inventory: ' + err.message);
+                }
+            };
+            
+            // Remove product from DC
+            const handleRemoveInventory = async (productId) => {
+                if (!confirm('Remove this product from DC inventory?')) return;
+                try {
+                    await api.request(`/data/distribution-centers/${inventoryDC.id}/inventory/${productId}`, {
+                        method: 'DELETE'
+                    });
+                    loadInventory(inventoryDC);
+                } catch (err) {
+                    alert('Error removing inventory: ' + err.message);
+                }
+            };
+            
+            // Get products not yet in this DC's inventory
+            const availableProducts = (data?.products || []).filter(p => 
+                !dcInventory.some(inv => inv.product_id === p.id)
+            );
 
             return (
                 <>
@@ -6870,6 +6970,7 @@
                                         <td><span className={`status-badge status-${item.status}`}>{item.status}</span></td>
                                         <td>
                                             <div className="action-buttons">
+                                                <button className="btn btn-sm" style={{background:'#10B981',color:'white'}} onClick={() => loadInventory(item)} title="Manage product inventory">📦 Inventory</button>
                                                 <button className="btn btn-sm btn-secondary" onClick={() => { setEditItem(item); setShowModal(true); }}>Edit</button>
                                                 <button className="btn btn-sm btn-danger" onClick={() => handleDelete(item.id)}>Delete</button>
                                             </div>
@@ -6882,6 +6983,137 @@
                             </tbody>
                         </table>
                     </div>
+                    
+                    {/* DC Inventory Modal */}
+                    {showInventoryModal && inventoryDC && (
+                        <div className="modal-overlay" onClick={() => setShowInventoryModal(false)}>
+                            <div className="modal-content" style={{maxWidth:'800px',maxHeight:'85vh',overflow:'auto'}} onClick={e => e.stopPropagation()}>
+                                <div className="modal-header">
+                                    <h2>📦 {inventoryDC.name} - Product Inventory</h2>
+                                    <button className="modal-close" onClick={() => setShowInventoryModal(false)}>&times;</button>
+                                </div>
+                                
+                                <p style={{color:'var(--text-secondary)',marginBottom:'1rem',fontSize:'0.9rem'}}>
+                                    Manage products stocked at this distribution center. Inventory automatically adjusts when drivers make deliveries and collect returns.
+                                </p>
+                                
+                                {inventoryLoading ? (
+                                    <div style={{textAlign:'center',padding:'2rem'}}>Loading inventory...</div>
+                                ) : (
+                                    <>
+                                        {dcInventory.length > 0 ? (
+                                            <table style={{marginBottom:'1.5rem'}}>
+                                                <thead>
+                                                    <tr>
+                                                        <th>Product</th>
+                                                        <th style={{textAlign:'center'}}>On Hand</th>
+                                                        <th style={{textAlign:'center'}}>Reorder Level</th>
+                                                        <th style={{textAlign:'center'}}>Max Capacity</th>
+                                                        <th style={{textAlign:'center'}}>Status</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {dcInventory.map(inv => {
+                                                        const isLow = inv.reorder_level > 0 && inv.quantity_on_hand <= inv.reorder_level;
+                                                        const pctFull = inv.max_capacity > 0 ? Math.round((inv.quantity_on_hand / inv.max_capacity) * 100) : null;
+                                                        return (
+                                                            <tr key={inv.id}>
+                                                                <td>
+                                                                    <div style={{fontWeight:'600'}}>{inv.product_name}</div>
+                                                                    <div style={{fontSize:'0.75rem',color:'var(--text-secondary)'}}>{inv.product_code} · {inv.unit_type}</div>
+                                                                </td>
+                                                                <td style={{textAlign:'center'}}>
+                                                                    <span style={{fontSize:'1.1rem',fontWeight:'700',color: isLow ? '#EF4444' : 'var(--text-primary)'}}>
+                                                                        {inv.quantity_on_hand.toLocaleString()}
+                                                                    </span>
+                                                                </td>
+                                                                <td style={{textAlign:'center',color:'var(--text-secondary)'}}>{inv.reorder_level || '-'}</td>
+                                                                <td style={{textAlign:'center',color:'var(--text-secondary)'}}>{inv.max_capacity ? inv.max_capacity.toLocaleString() : '-'}</td>
+                                                                <td style={{textAlign:'center'}}>
+                                                                    {isLow ? (
+                                                                        <span style={{background:'#FEE2E2',color:'#DC2626',padding:'2px 8px',borderRadius:'4px',fontSize:'0.75rem',fontWeight:'600'}}>LOW STOCK</span>
+                                                                    ) : pctFull !== null ? (
+                                                                        <span style={{background:'#F0FDF4',color:'#16A34A',padding:'2px 8px',borderRadius:'4px',fontSize:'0.75rem',fontWeight:'600'}}>{pctFull}% full</span>
+                                                                    ) : (
+                                                                        <span style={{color:'var(--text-secondary)'}}>OK</span>
+                                                                    )}
+                                                                </td>
+                                                                <td>
+                                                                    <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                                                                        <button className="btn btn-sm" style={{padding:'4px 8px'}} onClick={() => handleUpdateQty(inv.product_id, -10)} title="-10">-10</button>
+                                                                        <button className="btn btn-sm" style={{padding:'4px 8px'}} onClick={() => handleUpdateQty(inv.product_id, -1)} title="-1">-</button>
+                                                                        <button className="btn btn-sm btn-secondary" style={{padding:'4px 8px',minWidth:'40px'}} onClick={() => handleSetQty(inv.product_id, inv.quantity_on_hand)} title="Set exact quantity">✏️</button>
+                                                                        <button className="btn btn-sm" style={{padding:'4px 8px'}} onClick={() => handleUpdateQty(inv.product_id, 1)} title="+1">+</button>
+                                                                        <button className="btn btn-sm" style={{padding:'4px 8px'}} onClick={() => handleUpdateQty(inv.product_id, 10)} title="+10">+10</button>
+                                                                        <button className="btn btn-sm btn-danger" style={{padding:'4px 8px',marginLeft:'8px'}} onClick={() => handleRemoveInventory(inv.product_id)} title="Remove">🗑️</button>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        ) : (
+                                            <div style={{textAlign:'center',padding:'2rem',background:'var(--bg-secondary)',borderRadius:'8px',marginBottom:'1.5rem'}}>
+                                                <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>📦</div>
+                                                <div style={{color:'var(--text-secondary)'}}>No products assigned to this DC yet.</div>
+                                            </div>
+                                        )}
+                                        
+                                        {/* Add Product Form */}
+                                        {showAddProduct ? (
+                                            <div style={{background:'var(--bg-secondary)',padding:'1rem',borderRadius:'8px',marginTop:'1rem'}}>
+                                                <h4 style={{marginBottom:'1rem'}}>Add Product to Inventory</h4>
+                                                <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:'1rem',marginBottom:'1rem'}}>
+                                                    <div>
+                                                        <label className="form-label">Product</label>
+                                                        <select className="form-input" value={newProductId} onChange={e => setNewProductId(e.target.value)}>
+                                                            <option value="">Select a product...</option>
+                                                            {availableProducts.map(p => (
+                                                                <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="form-label">Qty On Hand</label>
+                                                        <input type="number" className="form-input" value={newQty} onChange={e => setNewQty(e.target.value)} min="0" />
+                                                    </div>
+                                                    <div>
+                                                        <label className="form-label">Reorder Level</label>
+                                                        <input type="number" className="form-input" value={newReorder} onChange={e => setNewReorder(e.target.value)} min="0" />
+                                                    </div>
+                                                    <div>
+                                                        <label className="form-label">Max Capacity</label>
+                                                        <input type="number" className="form-input" value={newMaxCap} onChange={e => setNewMaxCap(e.target.value)} min="0" />
+                                                    </div>
+                                                </div>
+                                                <div style={{display:'flex',gap:'0.5rem'}}>
+                                                    <button className="btn btn-primary" onClick={handleAddInventory} disabled={!newProductId}>Add Product</button>
+                                                    <button className="btn btn-secondary" onClick={() => setShowAddProduct(false)}>Cancel</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <button className="btn btn-primary" onClick={() => setShowAddProduct(true)} disabled={availableProducts.length === 0}>
+                                                + Add Product to DC
+                                            </button>
+                                        )}
+                                        
+                                        {availableProducts.length === 0 && !showAddProduct && dcInventory.length > 0 && (
+                                            <p style={{color:'var(--text-secondary)',fontSize:'0.85rem',marginTop:'0.5rem'}}>
+                                                All products are already assigned to this DC.
+                                            </p>
+                                        )}
+                                    </>
+                                )}
+                                
+                                <div className="modal-actions" style={{marginTop:'1.5rem'}}>
+                                    <button className="btn btn-secondary" onClick={() => setShowInventoryModal(false)}>Close</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    
                     {showModal && (
                         <EntityModal 
                             title={editItem ? 'Edit Distribution Center' : 'Add Distribution Center'}
