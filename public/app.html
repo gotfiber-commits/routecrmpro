@@ -542,6 +542,75 @@
             background: var(--info-bg); 
             color: var(--primary-light);
         }
+
+        /* ============================================
+           UTILITY CLASSES (Prospects, Import views)
+           ============================================ */
+        .dashboard-container { width: 100%; }
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th {
+            padding: 0.75rem 0.85rem;
+            text-align: left;
+            background: var(--bg-dark);
+            font-weight: 600;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        .data-table td {
+            padding: 0.7rem 0.85rem;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem;
+        }
+        .data-table tr:hover { background: var(--bg-hover); }
+        .data-table code {
+            background: var(--bg-dark);
+            padding: 0.1rem 0.35rem;
+            border-radius: var(--radius-sm, 4px);
+            font-size: 0.8rem;
+        }
+        .close-btn {
+            background: var(--bg-hover);
+            border: 1px solid var(--border);
+            width: 34px;
+            height: 34px;
+            border-radius: var(--radius-md);
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: var(--transition-fast);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+        .close-btn:hover {
+            background: var(--danger-bg);
+            color: var(--danger);
+            border-color: var(--danger);
+        }
+        /* Generic pill badges */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.25rem 0.65rem;
+            border-radius: var(--radius-full);
+            font-size: 0.72rem;
+            font-weight: 600;
+            background: var(--bg-hover);
+            color: var(--text-secondary);
+        }
+        .badge-danger { background: var(--danger-bg); color: var(--danger-light); }
+        .badge-warning { background: var(--warning-bg); color: var(--warning-light); }
+        .badge-info { background: var(--info-bg); color: var(--primary-light); }
+        .badge-success { background: var(--success-bg); color: var(--success-light); }
+        .badge-secondary { background: var(--bg-hover); color: var(--text-muted); }
         
         /* ============================================
            MODALS
@@ -1324,6 +1393,7 @@
             const [loading, setLoading] = useState(true);
             const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
             const [selectedCustomerId, setSelectedCustomerId] = useState(null);
+            const [newCustomerPrefill, setNewCustomerPrefill] = useState(null); // Prefill add-customer form from map click
 
             useEffect(() => { loadData(); }, []);
 
@@ -1355,6 +1425,7 @@
                 { id: 'drivers', icon: '👷', label: 'Drivers' },
                 { id: 'dcs', icon: '🏭', label: 'Distribution Centers' },
                 { id: 'predictions', icon: '🔮', label: 'Predictions' },
+                { id: 'prospects', icon: '🎯', label: 'Prospects' },
                 { id: 'import', icon: '📤', label: 'Import Data' },
                 { id: 'reports', icon: '📈', label: 'Reports' },
             ];
@@ -1418,11 +1489,13 @@
                                     setActiveView(view); 
                                     if (view === 'customers' && extraData?.customerId) {
                                         setSelectedCustomerId(extraData.customerId);
+                                    } else if (view === 'customers' && extraData?.prefillCustomer) {
+                                        setNewCustomerPrefill(extraData.prefillCustomer);
                                     } else if (extraData && view !== 'customers') {
                                         window.pendingRouteLocation = extraData;
                                     }
                                 }} />}
-                                {activeView === 'customers' && <CustomersView data={data} onRefresh={loadData} selectedCustomerId={selectedCustomerId} onClearSelection={() => setSelectedCustomerId(null)} />}
+                                {activeView === 'customers' && <CustomersView data={data} onRefresh={loadData} selectedCustomerId={selectedCustomerId} onClearSelection={() => setSelectedCustomerId(null)} prefillCustomer={newCustomerPrefill} onClearPrefill={() => setNewCustomerPrefill(null)} />}
                                 {activeView === 'orders' && <OrdersView data={data} onRefresh={loadData} />}
                                 {activeView === 'route-templates' && <RouteTemplatesView data={data} onRefresh={loadData} />}
                                 {activeView === 'active-routes' && <ActiveRoutesView data={data} onRefresh={loadData} />}
@@ -1432,6 +1505,7 @@
                                 {activeView === 'dcs' && <DCsView data={data} onRefresh={loadData} />}
                                 {activeView === 'settings' && <SettingsView data={data} onRefresh={loadData} />}
                                 {activeView === 'predictions' && <PredictionsView data={data} />}
+                                {activeView === 'prospects' && <ProspectsView data={data} onNavigate={setActiveView} />}
                                 {activeView === 'import' && <ImportView data={data} onRefresh={loadData} />}
                                 {activeView === 'reports' && <ReportsView data={data} />}
                                 {activeView === 'billing' && <BillingView />}
@@ -1534,8 +1608,9 @@
                         mapTypeControl: true,
                         streetViewControl: true,
                         fullscreenControl: true,
-                        clickableIcons: true,  // Enable clicking on POIs (businesses, etc.)
-                        mapId: 'routecrmpro_map' // Required for advanced markers
+                        clickableIcons: true  // Enable clicking on POIs (businesses, etc.)
+                        // Note: no mapId set — this app uses classic google.maps.Marker (not Advanced Markers),
+                        // and an unconfigured mapId can suppress default POI click behavior.
                     });
                     mapInstance.current = map;
 
@@ -1598,7 +1673,21 @@
                             const infoWindow = new google.maps.InfoWindow({ content: infoContent });
                             infoWindow.open(map, marker);
                             google.maps.event.addListenerOnce(infoWindow, 'domready', () => {
-                                document.getElementById('add-customer-btn')?.addEventListener('click', () => { setShowAddModal(true); infoWindow.close(); });
+                                document.getElementById('add-customer-btn')?.addEventListener('click', () => {
+                                    const prefill = {
+                                        code: 'CUST-' + Date.now().toString().slice(-6),
+                                        name: placeData.name || '',
+                                        address: placeData.address || '',
+                                        city: placeData.city || '',
+                                        state: placeData.state || '',
+                                        zip: placeData.zip || '',
+                                        lat: placeData.lat,
+                                        lng: placeData.lng,
+                                        customer_type: 'commercial'
+                                    };
+                                    infoWindow.close();
+                                    if (onNavigate) onNavigate('customers', { prefillCustomer: prefill });
+                                });
                                 document.getElementById('add-to-route-btn')?.addEventListener('click', () => { if (onNavigate) onNavigate('route-templates', placeData); infoWindow.close(); });
                             });
 
@@ -1701,8 +1790,23 @@
 
                                 google.maps.event.addListenerOnce(clickInfoWindow, 'domready', () => {
                                     document.getElementById('poi-add-customer-btn')?.addEventListener('click', () => {
-                                        setShowAddModal(true);
+                                        // Build a pre-filled customer object from the store's Google Places data
+                                        const prefill = {
+                                            code: 'CUST-' + Date.now().toString().slice(-6),
+                                            name: placeData.name || '',
+                                            address: placeData.address || '',
+                                            city: placeData.city || '',
+                                            state: placeData.state || '',
+                                            zip: placeData.zip || '',
+                                            lat: placeData.lat,
+                                            lng: placeData.lng,
+                                            phone: placeData.phone || '',
+                                            customer_type: 'commercial' // Businesses default to commercial
+                                        };
                                         clickInfoWindow.close();
+                                        if (clickMarker) clickMarker.setMap(null);
+                                        // Navigate to Customers and open the full form pre-filled for review/edit
+                                        if (onNavigate) onNavigate('customers', { prefillCustomer: prefill });
                                     });
                                     document.getElementById('poi-add-route-btn')?.addEventListener('click', () => {
                                         if (onNavigate) onNavigate('route-templates', placeData);
@@ -1791,8 +1895,20 @@
 
                             google.maps.event.addListenerOnce(clickInfoWindow, 'domready', () => {
                                 document.getElementById('rightclick-add-customer-btn')?.addEventListener('click', () => {
-                                    setShowAddModal(true);
+                                    const prefill = {
+                                        code: 'CUST-' + Date.now().toString().slice(-6),
+                                        name: addressData.name || '',
+                                        address: addressData.address || '',
+                                        city: addressData.city || '',
+                                        state: addressData.state || '',
+                                        zip: addressData.zip || '',
+                                        lat: addressData.lat,
+                                        lng: addressData.lng,
+                                        customer_type: 'commercial'
+                                    };
                                     clickInfoWindow.close();
+                                    if (clickMarker) clickMarker.setMap(null);
+                                    if (onNavigate) onNavigate('customers', { prefillCustomer: prefill });
                                 });
                                 document.getElementById('rightclick-close-btn')?.addEventListener('click', () => {
                                     clickInfoWindow.close();
@@ -2105,7 +2221,21 @@
                                     </div>
                                 </div>
                                 <div style={{display:'flex',gap:'0.5rem'}}>
-                                    <button className="btn btn-primary btn-sm" onClick={() => setShowAddModal(true)}>+ Add as Customer</button>
+                                    <button className="btn btn-primary btn-sm" onClick={() => {
+                                        const prefill = {
+                                            code: 'CUST-' + Date.now().toString().slice(-6),
+                                            name: searchedPlace.name || '',
+                                            address: searchedPlace.address || '',
+                                            city: searchedPlace.city || '',
+                                            state: searchedPlace.state || '',
+                                            zip: searchedPlace.zip || '',
+                                            lat: searchedPlace.lat,
+                                            lng: searchedPlace.lng,
+                                            phone: searchedPlace.phone || '',
+                                            customer_type: 'commercial'
+                                        };
+                                        if (onNavigate) onNavigate('customers', { prefillCustomer: prefill });
+                                    }}>+ Add as Customer</button>
                                     <button className="btn btn-success btn-sm" onClick={() => onNavigate && onNavigate('route-templates', searchedPlace)}>+ Add to Route</button>
                                 </div>
                             </div>
@@ -3030,7 +3160,7 @@
         // =====================================================
         // CUSTOMERS VIEW
         // =====================================================
-        function CustomersView({ data, onRefresh, selectedCustomerId, onClearSelection }) {
+        function CustomersView({ data, onRefresh, selectedCustomerId, onClearSelection, prefillCustomer, onClearPrefill }) {
             const [showModal, setShowModal] = useState(false);
             const [editItem, setEditItem] = useState(null);
             const [loading, setLoading] = useState(false);
@@ -3066,6 +3196,15 @@
                     if (onClearSelection) onClearSelection();
                 }
             }, [selectedCustomerId, data?.customers]);
+
+            // Open a pre-filled ADD form when arriving from a map store click
+            useEffect(() => {
+                if (prefillCustomer) {
+                    setEditItem(prefillCustomer); // No id => treated as new customer, but fields pre-filled
+                    setShowModal(true);
+                    if (onClearPrefill) onClearPrefill();
+                }
+            }, [prefillCustomer]);
 
             // Load products for customer assignment
             useEffect(() => {
@@ -3139,10 +3278,12 @@
                     const { customerProducts, ...customerData } = formData;
                     
                     let customerId;
-                    if (editItem) {
+                    if (editItem && editItem.id) {
+                        // Existing customer → update
                         await api.request(`/data/customers/${editItem.id}`, { method: 'PUT', body: JSON.stringify(customerData) });
                         customerId = editItem.id;
                     } else {
+                        // New customer (including map-prefilled) → create
                         const result = await api.request('/data/customers', { method: 'POST', body: JSON.stringify(customerData) });
                         customerId = result.id;
                     }
@@ -3287,7 +3428,11 @@
         // Customer Form Modal with Address Autocomplete and Product Assignment
         function CustomerFormModal({ editItem, dcOptions, products, onSave, onClose, loading }) {
             const defaultData = { status: 'active', customer_type: 'residential', tank_size: 500, current_level: 50, price_per_gallon: 2.50, payment_terms: 'net30', minimum_level: 20 };
-            const [formData, setFormData] = useState(() => editItem ? { ...editItem } : { ...defaultData });
+            // Existing customer (has id) → use as-is. New/prefilled (no id) → layer prefill over defaults.
+            const isExisting = !!(editItem && editItem.id);
+            const [formData, setFormData] = useState(() =>
+                isExisting ? { ...editItem } : { ...defaultData, ...(editItem || {}) }
+            );
             const [error, setError] = useState('');
             const [geocodeMsg, setGeocodeMsg] = useState('');
             const [customerProducts, setCustomerProducts] = useState({});
@@ -3392,7 +3537,7 @@
                 <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
                     <div className="modal" style={{maxWidth:'700px'}}>
                         <div className="modal-header">
-                            <h3>{editItem ? 'Edit Customer' : 'Add Customer'}</h3>
+                            <h3>{isExisting ? 'Edit Customer' : 'Add Customer'}</h3>
                             <button className="modal-close" onClick={onClose}>&times;</button>
                         </div>
                         <form onSubmit={handleSubmit}>
@@ -10034,6 +10179,512 @@
                         </div>
                     )}
                 </>
+            );
+        }
+
+        // =====================================================
+        // PROSPECTS VIEW - Gas Station / Convenience Store Lead Finder
+        // =====================================================
+        function ProspectsView({ data, onNavigate }) {
+            const mapRef = useRef(null);
+            const mapInstance = useRef(null);
+            const placesServiceRef = useRef(null);
+            const markersRef = useRef([]);
+            const seenPlaceIds = useRef(new Set());   // Dedup across searches
+            const idleListenerRef = useRef(null);
+            const searchTimerRef = useRef(null);
+
+            const [autoSearch, setAutoSearch] = useState(true);
+            const [searching, setSearching] = useState(false);
+            const [prospects, setProspects] = useState([]);   // Non-customer stores
+            const [matchedCustomers, setMatchedCustomers] = useState(0);
+            const [zoomWarning, setZoomWarning] = useState(false);
+            const [showReport, setShowReport] = useState(false);
+            const [enriching, setEnriching] = useState(false);
+            const [enrichProgress, setEnrichProgress] = useState({ done: 0, total: 0 });
+
+            // Per-session auto-search cap to control API cost
+            const AUTO_SEARCH_CAP = 40;
+            const [autoSearchCount, setAutoSearchCount] = useState(0);
+            const autoSearchCountRef = useRef(0);
+            useEffect(() => { autoSearchCountRef.current = autoSearchCount; }, [autoSearchCount]);
+
+            // Places API mode: 'auto' tries new API first, then falls back to 'legacy'
+            const apiModeRef = useRef('auto');
+
+            const customers = data?.customers || [];
+            const dcs = (data?.distributionCenters || []).filter(dc => dc.lat && dc.lng);
+
+            // Haversine distance in miles
+            const distanceMiles = (lat1, lng1, lat2, lng2) => {
+                const R = 3959;
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLng = (lng2 - lng1) * Math.PI / 180;
+                const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2;
+                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            };
+
+            // Find nearest DC to a point; returns { name, miles }
+            const nearestDC = (lat, lng) => {
+                let best = null;
+                dcs.forEach(dc => {
+                    const d = distanceMiles(lat, lng, parseFloat(dc.lat), parseFloat(dc.lng));
+                    if (!best || d < best.miles) best = { name: dc.name, miles: d };
+                });
+                return best;
+            };
+
+            // Is this place already a customer? Match by proximity (~60m) to any customer location.
+            const isCustomer = (lat, lng) => {
+                for (const c of customers) {
+                    if (!c.lat || !c.lng) continue;
+                    const d = distanceMiles(lat, lng, parseFloat(c.lat), parseFloat(c.lng));
+                    if (d < 0.037) return true; // ~60 meters
+                }
+                return false;
+            };
+
+            // Refs so the map's idle listener (a long-lived closure) always sees
+            // the latest autoSearch flag and runSearch implementation.
+            const autoSearchRef = useRef(autoSearch);
+            useEffect(() => { autoSearchRef.current = autoSearch; }, [autoSearch]);
+            const runSearchRef = useRef(null);
+
+            // Initialize map once
+            useEffect(() => {
+                if (!mapRef.current || mapInstance.current) return;
+
+                const firstDC = dcs[0];
+                const center = firstDC
+                    ? { lat: parseFloat(firstDC.lat), lng: parseFloat(firstDC.lng) }
+                    : { lat: 39.8283, lng: -98.5795 };
+
+                const map = new google.maps.Map(mapRef.current, {
+                    center,
+                    zoom: firstDC ? 13 : 5,
+                    mapTypeControl: true,
+                    streetViewControl: false,
+                    fullscreenControl: true
+                });
+                mapInstance.current = map;
+                placesServiceRef.current = new google.maps.places.PlacesService(map);
+
+                // Attach idle listener (fires after pan/zoom settles)
+                idleListenerRef.current = map.addListener('idle', () => {
+                    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+                    // Debounce slightly so rapid movements don't each trigger a search
+                    searchTimerRef.current = setTimeout(async () => {
+                        if (!autoSearchRef.current || !runSearchRef.current) return;
+                        // Enforce the per-session auto-search cap
+                        if (autoSearchCountRef.current >= AUTO_SEARCH_CAP) {
+                            setAutoSearch(false);
+                            return;
+                        }
+                        // Only count against the cap if a search actually ran (passed zoom guard)
+                        const didSearch = await runSearchRef.current();
+                        if (didSearch) setAutoSearchCount(c => c + 1);
+                    }, 600);
+                });
+
+                return () => {
+                    if (idleListenerRef.current) google.maps.event.removeListener(idleListenerRef.current);
+                    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+                };
+            }, []);
+
+            // Process one normalized place result (shared by both API paths)
+            const handlePlaceResult = ({ place_id, name, vicinity, lat, lng, types }) => {
+                if (!place_id || seenPlaceIds.current.has(place_id)) return;
+                seenPlaceIds.current.add(place_id);
+
+                const customer = isCustomer(lat, lng);
+                addMarker({ place_id, name, vicinity, lat, lng, isCustomer: customer, types });
+
+                if (customer) {
+                    setMatchedCustomers(prev => prev + 1);
+                } else {
+                    const dc = nearestDC(lat, lng);
+                    setProspects(prev => [...prev, {
+                        place_id, name, vicinity, lat, lng,
+                        nearestDcName: dc?.name || '-',
+                        nearestDcMiles: dc ? dc.miles.toFixed(1) : '-',
+                        phone: null, website: null, enriched: false
+                    }]);
+                }
+            };
+
+            // Search using the NEW Places API (Place.searchNearby). Returns true on success.
+            const searchWithNewAPI = async (map) => {
+                if (!(google.maps.places.Place && google.maps.places.Place.searchNearby)) return false;
+
+                const bounds = map.getBounds();
+                const center = map.getCenter();
+                if (!bounds || !center) return false;
+
+                // New API uses a circular locationRestriction (radius <= 50000m).
+                const ne = bounds.getNorthEast();
+                const sw = bounds.getSouthWest();
+                let radius = 5000;
+                if (google.maps.geometry?.spherical) {
+                    const diameter = google.maps.geometry.spherical.computeDistanceBetween(ne, sw);
+                    radius = Math.min(Math.max(diameter / 2, 100), 50000);
+                }
+
+                const request = {
+                    fields: ['id', 'displayName', 'location', 'formattedAddress', 'types'],
+                    locationRestriction: { center: { lat: center.lat(), lng: center.lng() }, radius },
+                    includedPrimaryTypes: ['gas_station', 'convenience_store'],
+                    maxResultCount: 20
+                };
+
+                const { places } = await google.maps.places.Place.searchNearby(request);
+                (places || []).forEach(place => {
+                    if (!place.location) return;
+                    handlePlaceResult({
+                        place_id: place.id,
+                        name: (place.displayName && place.displayName.text) || place.displayName || 'Unknown',
+                        vicinity: place.formattedAddress || '',
+                        lat: place.location.lat(),
+                        lng: place.location.lng(),
+                        types: place.types || []
+                    });
+                });
+                return true;
+            };
+
+            // Search using the LEGACY PlacesService.nearbySearch. Returns a Promise.
+            const searchWithLegacyAPI = (map) => new Promise((resolve) => {
+                const svc = placesServiceRef.current;
+                if (!svc) return resolve(false);
+                const bounds = map.getBounds();
+                if (!bounds) return resolve(false);
+
+                const types = ['gas_station', 'convenience_store'];
+                let pending = types.length;
+                let anyOk = false;
+
+                types.forEach(type => {
+                    svc.nearbySearch({ bounds, type }, (results, status) => {
+                        if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+                            anyOk = true;
+                            results.forEach(place => {
+                                if (!place.geometry?.location) return;
+                                handlePlaceResult({
+                                    place_id: place.place_id,
+                                    name: place.name || 'Unknown',
+                                    vicinity: place.vicinity || '',
+                                    lat: place.geometry.location.lat(),
+                                    lng: place.geometry.location.lng(),
+                                    types: place.types || []
+                                });
+                            });
+                        }
+                        pending--;
+                        if (pending === 0) resolve(anyOk);
+                    });
+                });
+            });
+
+            // Run a nearby search; tries new API first, falls back to legacy.
+            // Returns true if a search actually executed, false if blocked by the zoom guard.
+            const runSearch = async () => {
+                const map = mapInstance.current;
+                if (!map) return false;
+
+                // Cost guard: require a reasonable zoom so we don't pull huge result sets
+                if (map.getZoom() < 12) {
+                    setZoomWarning(true);
+                    return false;
+                }
+                setZoomWarning(false);
+                setSearching(true);
+
+                try {
+                    if (apiModeRef.current === 'auto' || apiModeRef.current === 'new') {
+                        try {
+                            const ok = await searchWithNewAPI(map);
+                            if (ok) {
+                                apiModeRef.current = 'new';
+                                return true;
+                            }
+                            // New API classes not present → use legacy from now on
+                            apiModeRef.current = 'legacy';
+                        } catch (err) {
+                            // New API present but not enabled/authorized → fall back to legacy
+                            console.warn('New Places API unavailable, falling back to legacy:', err?.message || err);
+                            apiModeRef.current = 'legacy';
+                        }
+                    }
+                    await searchWithLegacyAPI(map);
+                    return true;
+                } catch (err) {
+                    console.error('Prospect search failed:', err);
+                    return true; // a search was attempted; count it
+                } finally {
+                    setSearching(false);
+                }
+            };
+
+            // Keep the ref pointed at the latest runSearch so the idle closure uses current state
+            runSearchRef.current = runSearch;
+
+            // Add a colored dot marker to the map
+            const addMarker = (p) => {
+                const map = mapInstance.current;
+                const color = p.isCustomer ? '#10B981' : '#EF4444'; // green vs red
+                const marker = new google.maps.Marker({
+                    position: { lat: p.lat, lng: p.lng },
+                    map,
+                    title: p.name,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 7,
+                        fillColor: color,
+                        fillOpacity: 0.9,
+                        strokeColor: '#fff',
+                        strokeWeight: 2
+                    }
+                });
+
+                const dc = p.isCustomer ? null : nearestDC(p.lat, p.lng);
+                const esc = (s) => String(s || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+                const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name)}&query_place_id=${encodeURIComponent(p.place_id)}`;
+                const infoContent = `<div style="color:#333;min-width:200px;font-family:system-ui,sans-serif">
+                    <div style="font-weight:700;margin-bottom:4px">${esc(p.name)}</div>
+                    <div style="font-size:0.8rem;color:#555;margin-bottom:6px">${esc(p.vicinity)}</div>
+                    <div style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:${p.isCustomer ? '#f0fdf4' : '#fef2f2'};color:${color}">
+                        ${p.isCustomer ? '✓ Existing Customer' : '◯ Prospect (not a customer)'}
+                    </div>
+                    ${dc ? `<div style="font-size:0.78rem;color:#666;margin-top:6px">Nearest DC: ${esc(dc.name)} (${dc.miles.toFixed(1)} mi)</div>` : ''}
+                    ${!p.isCustomer ? `<a href="${gmapsUrl}" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;margin-top:8px;background:#6366F1;color:white;text-decoration:none;padding:6px;border-radius:6px;font-size:0.75rem;font-weight:600">🔍 View on Google Maps</a>` : ''}
+                </div>`;
+
+                const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+                marker.addListener('click', () => infoWindow.open(map, marker));
+
+                markersRef.current.push(marker);
+            };
+
+            // Fetch Place Details (phone + website) for one place. Returns a promise.
+            // Uses whichever API mode search settled on.
+            const enrichOne = async (placeId) => {
+                // Try new API first if we're in 'new' mode
+                if (apiModeRef.current === 'new' && google.maps.places.Place) {
+                    try {
+                        const place = new google.maps.places.Place({ id: placeId });
+                        await place.fetchFields({ fields: ['nationalPhoneNumber', 'websiteURI', 'formattedAddress'] });
+                        return {
+                            phone: place.nationalPhoneNumber || '',
+                            website: place.websiteURI || '',
+                            address: place.formattedAddress || ''
+                        };
+                    } catch (err) {
+                        console.warn('New API detail fetch failed, trying legacy:', err?.message || err);
+                        // fall through to legacy
+                    }
+                }
+                // Legacy getDetails
+                return new Promise((resolve) => {
+                    const svc = placesServiceRef.current;
+                    if (!svc) return resolve(null);
+                    svc.getDetails({
+                        placeId,
+                        fields: ['formatted_phone_number', 'website', 'formatted_address']
+                    }, (place, status) => {
+                        if (status === google.maps.places.PlacesServiceStatus.OK && place) {
+                            resolve({
+                                phone: place.formatted_phone_number || '',
+                                website: place.website || '',
+                                address: place.formatted_address || ''
+                            });
+                        } else {
+                            resolve(null);
+                        }
+                    });
+                });
+            };
+
+            // Enrich all prospects with phone/website for the report (on demand, sequential to respect rate limits)
+            const buildReport = async () => {
+                setShowReport(true);
+                const toEnrich = prospects.filter(p => !p.enriched);
+                if (toEnrich.length === 0) return;
+
+                setEnriching(true);
+                setEnrichProgress({ done: 0, total: toEnrich.length });
+
+                for (let i = 0; i < toEnrich.length; i++) {
+                    const p = toEnrich[i];
+                    // eslint-disable-next-line no-await-in-loop
+                    const details = await enrichOne(p.place_id);
+                    setProspects(prev => prev.map(x =>
+                        x.place_id === p.place_id
+                            ? { ...x, phone: details?.phone || '', website: details?.website || '', address: details?.address || x.vicinity, enriched: true }
+                            : x
+                    ));
+                    setEnrichProgress({ done: i + 1, total: toEnrich.length });
+                    // Small delay to avoid hammering the Places API
+                    // eslint-disable-next-line no-await-in-loop
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                setEnriching(false);
+            };
+
+            // Export report to CSV
+            const exportCSV = () => {
+                const headers = ['Name', 'Address', 'Phone', 'Website', 'Nearest DC', 'Distance (mi)', 'Latitude', 'Longitude'];
+                const rows = prospects.map(p => [
+                    p.name,
+                    p.address || p.vicinity || '',
+                    p.phone || '',
+                    p.website || '',
+                    p.nearestDcName,
+                    p.nearestDcMiles,
+                    p.lat.toFixed(6),
+                    p.lng.toFixed(6)
+                ]);
+                const csv = [headers, ...rows]
+                    .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+                    .join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `prospect-report-${new Date().toISOString().split('T')[0]}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            // Clear all found results and markers
+            const clearResults = () => {
+                markersRef.current.forEach(m => m.setMap(null));
+                markersRef.current = [];
+                seenPlaceIds.current = new Set();
+                setProspects([]);
+                setMatchedCustomers(0);
+            };
+
+            return (
+                <div className="dashboard-container">
+                    <div className="page-header">
+                        <div>
+                            <h1>🎯 Prospects</h1>
+                            <p className="text-muted">Find gas stations & convenience stores. Green = existing customer, Red = prospect.</p>
+                        </div>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="card" style={{marginBottom:'1rem'}}>
+                        <div className="card-body" style={{display:'flex', flexWrap:'wrap', gap:'1rem', alignItems:'center', justifyContent:'space-between'}}>
+                            <div style={{display:'flex', gap:'1.5rem', alignItems:'center', flexWrap:'wrap'}}>
+                                <label style={{display:'flex', alignItems:'center', gap:'0.5rem', cursor:'pointer'}}>
+                                    <input type="checkbox" checked={autoSearch} onChange={(e) => { setAutoSearch(e.target.checked); if (e.target.checked && autoSearchCount >= AUTO_SEARCH_CAP) setAutoSearchCount(0); }} style={{width:'18px', height:'18px'}} />
+                                    <span style={{fontWeight:'600'}}>Auto-search as map moves</span>
+                                </label>
+                                {autoSearch && (
+                                    <span style={{fontSize:'0.8rem', color: autoSearchCount >= AUTO_SEARCH_CAP - 5 ? 'var(--warning)' : 'var(--text-muted)'}}>
+                                        {AUTO_SEARCH_CAP - autoSearchCount} auto-searches left
+                                    </span>
+                                )}
+                                {!autoSearch && autoSearchCount >= AUTO_SEARCH_CAP && (
+                                    <span style={{fontSize:'0.8rem', color:'var(--warning)'}}>
+                                        Auto-search paused (cap reached). Re-check to reset.
+                                    </span>
+                                )}
+                                {!autoSearch && (
+                                    <button className="btn btn-secondary btn-sm" onClick={runSearch} disabled={searching}>
+                                        🔍 Search this area
+                                    </button>
+                                )}
+                                {searching && <span style={{color:'var(--text-muted)', fontSize:'0.9rem'}}><span className="spinner" style={{width:'14px',height:'14px',marginRight:'0.4rem'}}></span>Searching...</span>}
+                            </div>
+                            <div style={{display:'flex', gap:'0.5rem'}}>
+                                <button className="btn btn-secondary btn-sm" onClick={clearResults}>Clear</button>
+                                <button className="btn btn-primary btn-sm" onClick={buildReport} disabled={prospects.length === 0}>
+                                    📋 Red Dot Report ({prospects.length})
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Stat summary */}
+                    <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap:'1rem', marginBottom:'1rem'}}>
+                        <div className="card"><div className="card-body" style={{textAlign:'center'}}>
+                            <div style={{fontSize:'1.8rem', fontWeight:'700', color:'var(--danger)'}}>{prospects.length}</div>
+                            <div className="text-muted">🔴 Prospects</div>
+                        </div></div>
+                        <div className="card"><div className="card-body" style={{textAlign:'center'}}>
+                            <div style={{fontSize:'1.8rem', fontWeight:'700', color:'var(--success)'}}>{matchedCustomers}</div>
+                            <div className="text-muted">🟢 Existing Customers</div>
+                        </div></div>
+                        <div className="card"><div className="card-body" style={{textAlign:'center'}}>
+                            <div style={{fontSize:'1.8rem', fontWeight:'700', color:'var(--text-primary)'}}>{prospects.length + matchedCustomers}</div>
+                            <div className="text-muted">Total Found</div>
+                        </div></div>
+                    </div>
+
+                    {zoomWarning && (
+                        <div style={{background:'rgba(245,158,11,0.1)', border:'1px solid var(--warning)', padding:'0.75rem 1rem', borderRadius:'8px', marginBottom:'1rem', fontSize:'0.9rem'}}>
+                            ⚠️ Zoom in closer to search for stores. Searching while zoomed far out returns too many results and increases API costs.
+                        </div>
+                    )}
+
+                    {/* Map */}
+                    <div className="card">
+                        <div ref={mapRef} style={{width:'100%', height:'600px', borderRadius:'8px'}}></div>
+                    </div>
+
+                    {/* Report Modal */}
+                    {showReport && (
+                        <div className="modal-overlay" onClick={() => setShowReport(false)}>
+                            <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'900px', width:'95%'}}>
+                                <div className="modal-header">
+                                    <h2>📋 Red Dot Report — {prospects.length} Prospects</h2>
+                                    <button className="close-btn" onClick={() => setShowReport(false)}>×</button>
+                                </div>
+                                <div className="modal-body">
+                                    {enriching && (
+                                        <div style={{background:'var(--bg-dark)', padding:'0.75rem 1rem', borderRadius:'8px', marginBottom:'1rem', fontSize:'0.9rem'}}>
+                                            <span className="spinner" style={{width:'14px',height:'14px',marginRight:'0.5rem'}}></span>
+                                            Gathering contact info... {enrichProgress.done}/{enrichProgress.total}
+                                        </div>
+                                    )}
+                                    <div style={{marginBottom:'1rem', display:'flex', justifyContent:'flex-end'}}>
+                                        <button className="btn btn-success btn-sm" onClick={exportCSV} disabled={enriching}>
+                                            ⬇️ Export to CSV
+                                        </button>
+                                    </div>
+                                    <div style={{maxHeight:'500px', overflowY:'auto'}}>
+                                        <table className="data-table" style={{fontSize:'0.85rem'}}>
+                                            <thead>
+                                                <tr>
+                                                    <th>Name</th>
+                                                    <th>Address</th>
+                                                    <th>Phone</th>
+                                                    <th>Website</th>
+                                                    <th>Nearest DC</th>
+                                                    <th>Dist (mi)</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {prospects.map(p => (
+                                                    <tr key={p.place_id}>
+                                                        <td><strong>{p.name}</strong></td>
+                                                        <td>{p.address || p.vicinity || '-'}</td>
+                                                        <td>{p.enriched ? (p.phone || '—') : '...'}</td>
+                                                        <td>{p.enriched ? (p.website ? <a href={p.website} target="_blank" rel="noopener noreferrer" style={{color:'var(--primary)'}}>Link</a> : '—') : '...'}</td>
+                                                        <td>{p.nearestDcName}</td>
+                                                        <td>{p.nearestDcMiles}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
             );
         }
 
