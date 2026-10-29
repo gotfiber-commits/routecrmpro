@@ -270,7 +270,8 @@ async function createCompany(event) {
 async function updateCompany(companyId, event) {
     const body = parseBody(event);
     const allowedFields = ['name', 'email', 'phone', 'address', 'city', 'state', 'zip', 
-                          'plan', 'status', 'max_users', 'max_distribution_centers', 'max_trucks', 'settings'];
+                          'plan', 'status', 'max_users', 'max_distribution_centers', 'max_trucks', 'settings',
+                          'google_maps_enabled'];
 
     const updates = [];
     const values = [];

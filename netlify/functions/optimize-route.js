@@ -1,6 +1,6 @@
 // Route Optimization API
 // Solves Vehicle Routing Problem using Nearest Neighbor + 2-opt improvement
-const { query } = require('./utils/db');
+const { query, setTenant } = require('./utils/db');
 const { requireAuth } = require('./utils/auth');
 const { resolveTenant } = require('./utils/tenant');
 const { success, error, handleOptions, parseBody } = require('./utils/response');
@@ -26,6 +26,7 @@ exports.handler = async (event, context) => {
         }
         
         const companyId = authResult.user.companyId;
+        setTenant(companyId); // RLS tenant scope
 
         // POST /optimize-route - Optimize a set of stops
         if (method === 'POST' && path === '') {

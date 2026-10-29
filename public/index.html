@@ -131,7 +131,7 @@
         <div class="nav-links">
             <a href="#features">Features</a>
             <a href="#pricing">Pricing</a>
-            <a href="mailto:sales@routecrmpro.com">Contact Sales</a>
+            <a href="#" onclick="openSignup(event)" class="btn btn-primary" style="padding: 0.5rem 1.25rem;">Start Free Trial</a>
         </div>
     </nav>
 
@@ -178,7 +178,7 @@
             </button>
             
             <div class="form-footer">
-                <p>Don't have an account? <a href="mailto:sales@routecrmpro.com">Contact Sales</a></p>
+                <p>Don't have an account? <a href="#" onclick="openSignup(event)">Start your free trial</a></p>
             </div>
         </div>
     </section>
@@ -231,9 +231,76 @@
         </div>
     </div>
 
+    <!-- Signup / Free Trial Modal -->
+    <div class="modal-overlay" id="signupModal">
+        <div class="modal signup-modal">
+            <button class="modal-close" onclick="closeSignup()">&times;</button>
+            <h2>🚀 Start Your Free Trial</h2>
+            <p>30 days free. No credit card required.</p>
+
+            <div class="error-message" id="signupError"></div>
+
+            <form id="signupForm" onsubmit="handleSignup(event)">
+                <!-- Step 1: Company -->
+                <div class="signup-step" data-step="1">
+                    <div class="step-label">Step 1 of 2 · Your Company</div>
+                    <div class="form-group">
+                        <label class="form-label">Company Name</label>
+                        <input type="text" id="su_companyName" class="form-input" placeholder="Acme Propane Co." required autocomplete="organization">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Company ID (your portal address)</label>
+                        <div class="input-suffix">
+                            <input type="text" id="su_subdomain" class="form-input" placeholder="acmepropane" required autocomplete="off" spellcheck="false">
+                            <span>.routecrmpro.com</span>
+                        </div>
+                        <div class="field-hint" id="su_subdomainHint">Lowercase letters, numbers and hyphens. 3-63 characters.</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Phone <span style="color:var(--text-muted);font-weight:400;">(optional)</span></label>
+                        <input type="tel" id="su_phone" class="form-input" placeholder="(256) 555-0100" autocomplete="tel">
+                    </div>
+                    <button type="button" class="btn btn-primary" style="width:100%;" onclick="signupNext()">Continue</button>
+                </div>
+
+                <!-- Step 2: Admin account -->
+                <div class="signup-step" data-step="2" style="display:none;">
+                    <div class="step-label">Step 2 of 2 · Your Admin Account</div>
+                    <div class="form-group">
+                        <label class="form-label">Your Name</label>
+                        <input type="text" id="su_adminName" class="form-input" placeholder="Jane Smith" autocomplete="name">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Work Email</label>
+                        <input type="email" id="su_email" class="form-input" placeholder="jane@acmepropane.com" autocomplete="email">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Password</label>
+                        <input type="password" id="su_password" class="form-input" placeholder="At least 8 characters" autocomplete="new-password">
+                        <div class="field-hint" id="su_passwordHint">Minimum 8 characters.</div>
+                    </div>
+                    <div style="display:flex;gap:0.75rem;">
+                        <button type="button" class="btn btn-secondary" style="flex:0 0 auto;" onclick="signupBack()">Back</button>
+                        <button type="submit" id="signupBtn" class="btn btn-primary" style="flex:1;">Create Account & Start Trial</button>
+                    </div>
+                </div>
+            </form>
+
+            <div class="form-footer">
+                <p>Already have an account? <a href="#" onclick="closeSignup(event)">Sign in above</a></p>
+            </div>
+        </div>
+    </div>
+
     <style>
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; z-index: 1000; padding: 1rem; overflow-y: auto; }
         .modal-overlay.active { display: flex; }
+        .signup-modal { max-width: 480px; max-height: 92vh; overflow-y: auto; }
+        .signup-modal h2 { margin-bottom: 0.35rem; }
+        .step-label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 1rem; font-weight: 600; }
+        .field-hint { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.4rem; }
+        .field-hint.ok { color: #10B981; }
+        .field-hint.bad { color: #EF4444; }
         .modal { background: var(--bg-card); border-radius: 16px; width: 100%; max-width: 450px; padding: 2.5rem; position: relative; }
         .modal-close { position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; }
         .modal h2 { margin-bottom: 0.5rem; }
@@ -278,7 +345,7 @@
                     <p style="color: var(--text-muted);">${plan.description}</p>
                     <div class="price">${plan.price ? '$' + plan.price : 'Custom'}<span>${plan.period ? '/' + plan.period : ''}</span></div>
                     <ul>${plan.features.map(f => `<li>${f}</li>`).join('')}</ul>
-                    <a href="${plan.price ? '#' : 'mailto:sales@routecrmpro.com'}" class="btn ${plan.featured ? 'btn-primary' : 'btn-secondary'}" style="width: 100%;">${plan.price ? 'Get Started' : 'Contact Sales'}</a>
+                    <a href="${plan.price ? '#' : 'mailto:sales@routecrmpro.com'}" ${plan.price ? `onclick="openSignup(event, '${(plan.name||'').toLowerCase()}')"` : ''} class="btn ${plan.featured ? 'btn-primary' : 'btn-secondary'}" style="width: 100%;">${plan.price ? 'Start Free Trial' : 'Contact Sales'}</a>
                 </div>
             `).join('');
         }
@@ -359,6 +426,149 @@
         });
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') closeCompanyModal();
+        });
+
+        // ============================================================
+        // SIGNUP / FREE TRIAL
+        // ============================================================
+        function openSignup(e, plan) {
+            if (e) e.preventDefault();
+            document.getElementById('signupError').classList.remove('show');
+            goToSignupStep(1);
+            document.getElementById('signupModal').classList.add('active');
+            setTimeout(() => document.getElementById('su_companyName').focus(), 50);
+        }
+        function closeSignup(e) {
+            if (e) e.preventDefault();
+            document.getElementById('signupModal').classList.remove('active');
+        }
+        function goToSignupStep(step) {
+            document.querySelectorAll('.signup-step').forEach(el => {
+                el.style.display = (parseInt(el.dataset.step) === step) ? 'block' : 'none';
+            });
+        }
+        function signupBack() { goToSignupStep(1); }
+
+        // Auto-suggest a subdomain from the company name, and sanitize typed input.
+        const companyNameInput = document.getElementById('su_companyName');
+        const subdomainInput = document.getElementById('su_subdomain');
+        let subdomainEdited = false;
+        subdomainInput.addEventListener('input', () => {
+            subdomainEdited = true;
+            const cleaned = subdomainInput.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+            if (cleaned !== subdomainInput.value) subdomainInput.value = cleaned;
+            scheduleSubdomainCheck();
+        });
+        companyNameInput.addEventListener('input', () => {
+            if (!subdomainEdited) {
+                subdomainInput.value = companyNameInput.value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 63);
+                scheduleSubdomainCheck();
+            }
+        });
+
+        let subdomainCheckTimer = null;
+        let subdomainAvailable = false;
+        function scheduleSubdomainCheck() {
+            const hint = document.getElementById('su_subdomainHint');
+            subdomainAvailable = false;
+            const val = subdomainInput.value.trim();
+            hint.className = 'field-hint';
+            if (!val) { hint.textContent = 'Lowercase letters, numbers and hyphens. 3-63 characters.'; return; }
+            if (val.length < 3) { hint.textContent = 'Must be at least 3 characters'; hint.classList.add('bad'); return; }
+            hint.textContent = 'Checking availability…';
+            if (subdomainCheckTimer) clearTimeout(subdomainCheckTimer);
+            subdomainCheckTimer = setTimeout(async () => {
+                try {
+                    const r = await fetch('/.netlify/functions/auth/check-subdomain?subdomain=' + encodeURIComponent(val));
+                    const d = await r.json();
+                    if (d.available) {
+                        hint.textContent = '✓ ' + val + '.routecrmpro.com is available';
+                        hint.classList.add('ok');
+                        subdomainAvailable = true;
+                    } else {
+                        hint.textContent = '✗ ' + (d.reason || 'Not available');
+                        hint.classList.add('bad');
+                    }
+                } catch (err) {
+                    // If the check endpoint is unreachable, don't block signup; server re-validates.
+                    hint.textContent = 'Lowercase letters, numbers and hyphens.';
+                    subdomainAvailable = true;
+                }
+            }, 400);
+        }
+
+        function signupNext() {
+            const err = document.getElementById('signupError');
+            err.classList.remove('show');
+            const name = companyNameInput.value.trim();
+            const sub = subdomainInput.value.trim();
+            if (name.length < 2) { showSignupError('Please enter your company name'); return; }
+            if (sub.length < 3) { showSignupError('Company ID must be at least 3 characters'); return; }
+            if (!/^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/.test(sub)) { showSignupError('Company ID can only use lowercase letters, numbers and hyphens'); return; }
+            goToSignupStep(2);
+            setTimeout(() => document.getElementById('su_adminName').focus(), 50);
+        }
+
+        function showSignupError(msg) {
+            const err = document.getElementById('signupError');
+            err.textContent = msg;
+            err.classList.add('show');
+        }
+
+        async function handleSignup(event) {
+            event.preventDefault();
+            const btn = document.getElementById('signupBtn');
+            const err = document.getElementById('signupError');
+            err.classList.remove('show');
+
+            const payload = {
+                companyName: companyNameInput.value.trim(),
+                subdomain: subdomainInput.value.trim(),
+                phone: document.getElementById('su_phone').value.trim() || null,
+                adminName: document.getElementById('su_adminName').value.trim(),
+                email: document.getElementById('su_email').value.trim(),
+                password: document.getElementById('su_password').value
+            };
+
+            // Client-side validation
+            if (!payload.adminName) { showSignupError('Please enter your name'); return; }
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) { showSignupError('Please enter a valid email address'); return; }
+            if (payload.password.length < 8) { showSignupError('Password must be at least 8 characters'); return; }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Creating your account…';
+
+            try {
+                const response = await fetch('/.netlify/functions/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Could not create account');
+
+                // Auto-login: store session exactly like login does
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('user', JSON.stringify(data.user));
+                localStorage.setItem('company', JSON.stringify(data.company));
+
+                btn.innerHTML = '✓ Account created! Taking you in…';
+                setTimeout(() => {
+                    window.location.href = data.redirect || `/app.html?tenant=${data.company.subdomain}&welcome=1`;
+                }, 800);
+            } catch (e2) {
+                showSignupError(e2.message);
+                btn.disabled = false;
+                btn.innerHTML = 'Create Account & Start Trial';
+            }
+        }
+
+        // Close signup on backdrop click / Escape
+        document.getElementById('signupModal').addEventListener('click', function(e) {
+            if (e.target === this) closeSignup();
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeSignup();
         });
 
         // Portal page - just show the login form

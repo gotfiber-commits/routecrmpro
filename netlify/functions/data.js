@@ -1,5 +1,5 @@
 // Main Data API - Tenant CRUD operations
-const { query, transaction } = require('./utils/db');
+const { query, transaction, setTenant } = require('./utils/db');
 const { requireAuth, requireRole } = require('./utils/auth');
 const { success, error, handleOptions, parseBody, getPagination, paginatedResponse } = require('./utils/response');
 
@@ -20,6 +20,9 @@ exports.handler = async (event, context) => {
     
     const path = event.path.replace('/.netlify/functions/data', '');
     const method = event.httpMethod;
+
+    // Establish tenant scope for the whole request so RLS applies to every query.
+    setTenant(companyId);
 
     try {
         // GET /data - Get all data (dashboard)
@@ -126,7 +129,7 @@ async function getAllData(companyId, user) {
         params.push(user.dcId);
     }
 
-    const [dcs, trucks, drivers, customers, orders, routes, activeRoutes, products] = await Promise.all([
+    const [dcs, trucks, drivers, customers, orders, routes, activeRoutes, products, salesReps] = await Promise.all([
         query('SELECT * FROM distribution_centers WHERE company_id = $1 ORDER BY name', [companyId]),
         query(`SELECT t.*, dc.name as dc_name, d.name as driver_name
                FROM trucks t
@@ -135,7 +138,7 @@ async function getAllData(companyId, user) {
                WHERE t.company_id = $1${user.dcId ? ' AND t.dc_id = $2' : ''} 
                ORDER BY t.code`, params),
         query(`SELECT * FROM drivers WHERE company_id = $1${user.dcId ? ' AND dc_id = $2' : ''} ORDER BY name`, params),
-        query(`SELECT c.*, dc.name as dc_name FROM customers c LEFT JOIN distribution_centers dc ON c.preferred_dc_id = dc.id WHERE c.company_id = $1${user.dcId ? ' AND c.preferred_dc_id = $2' : ''} ORDER BY c.name`, params),
+        query(`SELECT c.*, dc.name as dc_name, sr.name as sales_rep_name FROM customers c LEFT JOIN distribution_centers dc ON c.preferred_dc_id = dc.id LEFT JOIN sales_reps sr ON c.sales_rep_id = sr.id WHERE c.company_id = $1${user.dcId ? ' AND c.preferred_dc_id = $2' : ''} ORDER BY c.name`, params),
         query(`SELECT o.*, c.name as customer_name, c.address as customer_address, c.city as customer_city, c.lat, c.lng
                FROM orders o 
                JOIN customers c ON o.customer_id = c.id 
@@ -157,7 +160,9 @@ async function getAllData(companyId, user) {
                ${user.dcId ? ' AND rr.dc_id = $2' : ''}
                ORDER BY rr.scheduled_date DESC, rr.created_at DESC LIMIT 50`, params),
         // Products for inventory management
-        query(`SELECT * FROM products WHERE company_id = $1 AND status = 'active' ORDER BY category, name`, [companyId])
+        query(`SELECT * FROM products WHERE company_id = $1 AND status = 'active' ORDER BY category, name`, [companyId]),
+        // Sales reps for assignment dropdowns
+        query(`SELECT id, code, name, status FROM sales_reps WHERE company_id = $1 AND status = 'active' ORDER BY name`, [companyId])
     ]);
 
     return success({
@@ -168,7 +173,8 @@ async function getAllData(companyId, user) {
         orders: orders.rows,
         routes: routes.rows,
         activeRoutes: activeRoutes.rows,
-        products: products.rows
+        products: products.rows,
+        salesReps: salesReps.rows
     });
 }
 
@@ -378,18 +384,31 @@ async function handleTrucks(method, path, companyId, user, event) {
         // Helper to convert empty strings to null (for dates and strings)
         const toVal = (v) => v && v.toString().trim() !== '' ? v : null;
         
-        // Start with base columns that always exist
-        let columns = [
-            'company_id', 'dc_id', 'code', 'name', 'make', 'model', 'year', 'vin', 'license_plate',
-            'capacity_gallons', 'mpg', 'current_lat', 'current_lng', 'status'
-        ];
-        let values = [
-            companyId, toVal(body.dc_id), body.code, body.name, toVal(body.make), toVal(body.model), toInt(body.year), toVal(body.vin), toVal(body.license_plate),
-            toInt(body.capacity_gallons) || 3000, toFloat(body.mpg) || 8, toFloat(body.current_lat), toFloat(body.current_lng), body.status || 'active'
-        ];
+        // Validate the one truly-required field.
+        if (!body.code || !body.code.toString().trim()) {
+            return error('Truck Code is required', 400);
+        }
 
-        // Try to add enhanced columns if they exist (from enhanced-profiles.sql)
-        const enhancedColumns = {
+        // company_id + code are the only guaranteed columns. Everything else is
+        // existence-checked against the live schema so a truck ALWAYS saves with
+        // just Basic Info, regardless of which migrations have run.
+        let columns = ['company_id', 'code'];
+        let values = [companyId, body.code.toString().trim()];
+
+        // All other columns (base + enhanced) — added only if they exist in the table.
+        const optionalColumns = {
+            'dc_id': toVal(body.dc_id),
+            'name': toVal(body.name),
+            'make': toVal(body.make),
+            'model': toVal(body.model),
+            'year': toInt(body.year),
+            'vin': toVal(body.vin),
+            'license_plate': toVal(body.license_plate),
+            'capacity_gallons': toInt(body.capacity_gallons) || 3000,
+            'mpg': toFloat(body.mpg) || 8,
+            'current_lat': toFloat(body.current_lat),
+            'current_lng': toFloat(body.current_lng),
+            'status': body.status || 'active',
             'assigned_driver_id': toVal(body.assigned_driver_id),
             'empty_weight': toInt(body.empty_weight),
             'gvwr': toInt(body.gvwr),
@@ -467,20 +486,22 @@ async function handleTrucks(method, path, companyId, user, event) {
             'notes': toVal(body.notes)
         };
 
-        // Check which enhanced columns exist and add them
+        // Check which optional columns exist and add them
         try {
             const colCheck = await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'trucks' AND table_schema = 'public'`);
             const existingCols = colCheck.rows.map(r => r.column_name);
-            
-            for (const [col, val] of Object.entries(enhancedColumns)) {
+
+            for (const [col, val] of Object.entries(optionalColumns)) {
                 if (existingCols.includes(col)) {
                     columns.push(col);
                     values.push(val);
                 }
             }
         } catch (e) {
-            // If column check fails, just use base columns
-            console.log('Enhanced columns check failed, using base columns only');
+            // If column check fails, fall back to the guaranteed base columns.
+            console.log('Column existence check failed, inserting guaranteed base columns only');
+            const fallback = { dc_id: toVal(body.dc_id), name: toVal(body.name), make: toVal(body.make), model: toVal(body.model), year: toInt(body.year), vin: toVal(body.vin), license_plate: toVal(body.license_plate), capacity_gallons: toInt(body.capacity_gallons) || 3000, mpg: toFloat(body.mpg) || 8, status: body.status || 'active' };
+            for (const [col, val] of Object.entries(fallback)) { columns.push(col); values.push(val); }
         }
 
         const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
@@ -747,41 +768,48 @@ async function handleDrivers(method, path, companyId, user, event) {
         const toDate = (val) => (val && typeof val === 'string' && val.trim() !== '') ? val : null;
         const toNum = (val, def = null) => (val !== undefined && val !== null && val !== '') ? val : def;
         const toStr = (val) => (val && typeof val === 'string' && val.trim() !== '') ? val : null;
-        
+
+        // company_id + code + name are the only guaranteed columns. Everything else
+        // is existence-checked against the live schema, so a driver ALWAYS saves with
+        // just Basic Info even if the compliance/CDL migration columns aren't present.
+        let columns = ['company_id', 'code', 'name'];
+        let values = [companyId, body.code.toString().trim(), body.name.toString().trim()];
+
+        const optionalColumns = {
+            'dc_id': body.dc_id || null, 'email': toStr(body.email), 'phone': toStr(body.phone),
+            'license_number': toStr(body.license_number), 'license_state': toStr(body.license_state), 'license_expiry': toDate(body.license_expiry),
+            'cdl_class': toStr(body.cdl_class), 'cdl_number': toStr(body.cdl_number), 'cdl_state': toStr(body.cdl_state), 'cdl_endorsements': toStr(body.cdl_endorsements),
+            'hazmat_certified': body.hazmat_certified || false, 'hazmat_endorsed': body.hazmat_endorsed || false, 'hazmat_expiration': toDate(body.hazmat_expiration),
+            'tanker_endorsed': body.tanker_endorsed || false, 'twic_card': body.twic_card || false, 'twic_expiration': toDate(body.twic_expiration),
+            'hire_date': toDate(body.hire_date), 'hourly_rate': toNum(body.hourly_rate, 25), 'overtime_rate': toNum(body.overtime_rate), 'per_diem': toNum(body.per_diem),
+            'pay_type': body.pay_type || 'hourly', 'years_experience': toNum(body.years_experience), 'date_of_birth': toDate(body.date_of_birth),
+            'medical_card_expiration': toDate(body.medical_card_expiration), 'medical_examiner_name': toStr(body.medical_examiner_name), 'medical_exam_date': toDate(body.medical_exam_date),
+            'background_check_date': toDate(body.background_check_date), 'background_check_status': body.background_check_status || 'pending',
+            'drug_test_date': toDate(body.drug_test_date), 'drug_test_status': body.drug_test_status || 'pending', 'drug_test_type': toStr(body.drug_test_type),
+            'mvr_check_date': toDate(body.mvr_check_date), 'mvr_status': body.mvr_status || 'pending',
+            'propane_certified': body.propane_certified || false, 'propane_cert_expiration': toDate(body.propane_cert_expiration),
+            'defensive_driving_cert': body.defensive_driving_cert || false, 'smith_system_trained': body.smith_system_trained || false, 'last_training_date': toDate(body.last_training_date),
+            'emergency_contact_name': toStr(body.emergency_contact_name), 'emergency_contact_phone': toStr(body.emergency_contact_phone), 'emergency_contact_relation': toStr(body.emergency_contact_relation),
+            'address': toStr(body.address), 'city': toStr(body.city), 'state': toStr(body.state), 'zip': toStr(body.zip), 'notes': toStr(body.notes), 'status': body.status || 'active'
+        };
+
+        try {
+            const colCheck = await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'drivers' AND table_schema = 'public'`);
+            const existingCols = colCheck.rows.map(r => r.column_name);
+            for (const [col, val] of Object.entries(optionalColumns)) {
+                if (existingCols.includes(col)) { columns.push(col); values.push(val); }
+            }
+        } catch (e) {
+            // Fall back to guaranteed base columns only.
+            const fallback = { dc_id: body.dc_id || null, email: toStr(body.email), phone: toStr(body.phone), status: body.status || 'active' };
+            for (const [col, val] of Object.entries(fallback)) { columns.push(col); values.push(val); }
+        }
+
+        const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
         try {
             const result = await query(
-                `INSERT INTO drivers (
-                    company_id, dc_id, code, name, email, phone, 
-                    license_number, license_state, license_expiry, cdl_class, cdl_number, cdl_state, cdl_endorsements,
-                    hazmat_certified, hazmat_endorsed, hazmat_expiration, tanker_endorsed, twic_card, twic_expiration,
-                    hire_date, hourly_rate, overtime_rate, per_diem, pay_type, years_experience, date_of_birth,
-                    medical_card_expiration, medical_examiner_name, medical_exam_date,
-                    background_check_date, background_check_status, drug_test_date, drug_test_status, drug_test_type, mvr_check_date, mvr_status,
-                    propane_certified, propane_cert_expiration, defensive_driving_cert, smith_system_trained, last_training_date,
-                    emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-                    address, city, state, zip, notes, status
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6,
-                    $7, $8, $9, $10, $11, $12, $13,
-                    $14, $15, $16, $17, $18, $19,
-                    $20, $21, $22, $23, $24, $25, $26,
-                    $27, $28, $29,
-                    $30, $31, $32, $33, $34, $35, $36,
-                    $37, $38, $39, $40, $41,
-                    $42, $43, $44,
-                    $45, $46, $47, $48, $49, $50
-                ) RETURNING *`,
-                [
-                    companyId, body.dc_id || null, body.code, body.name, body.email || null, body.phone || null,
-                    body.license_number || null, body.license_state || null, toDate(body.license_expiry), body.cdl_class || null, body.cdl_number || null, body.cdl_state || null, body.cdl_endorsements || null,
-                    body.hazmat_certified || false, body.hazmat_endorsed || false, toDate(body.hazmat_expiration), body.tanker_endorsed || false, body.twic_card || false, toDate(body.twic_expiration),
-                    toDate(body.hire_date), toNum(body.hourly_rate, 25), toNum(body.overtime_rate), toNum(body.per_diem), body.pay_type || 'hourly', toNum(body.years_experience), toDate(body.date_of_birth),
-                    toDate(body.medical_card_expiration), body.medical_examiner_name || null, toDate(body.medical_exam_date),
-                    toDate(body.background_check_date), body.background_check_status || 'pending', toDate(body.drug_test_date), body.drug_test_status || 'pending', body.drug_test_type || null, toDate(body.mvr_check_date), body.mvr_status || 'pending',
-                    body.propane_certified || false, toDate(body.propane_cert_expiration), body.defensive_driving_cert || false, body.smith_system_trained || false, toDate(body.last_training_date),
-                    body.emergency_contact_name || null, body.emergency_contact_phone || null, body.emergency_contact_relation || null,
-                    body.address || null, body.city || null, body.state || null, body.zip || null, body.notes || null, body.status || 'active'
-                ]
+                `INSERT INTO drivers (${columns.join(', ')}) VALUES (${placeholders}) RETURNING *`,
+                values
             );
             return success(result.rows[0], 201);
         } catch (dbErr) {
@@ -921,9 +949,9 @@ async function handleCustomers(method, path, companyId, user, event) {
         }
         
         const result = await query(
-            `INSERT INTO customers (company_id, preferred_dc_id, code, name, contact_name, email, phone, address, city, state, zip, lat, lng, customer_type, tank_size, price_per_gallon, payment_terms, delivery_instructions, auto_delivery, minimum_level)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING *`,
-            [companyId, preferredDcId, body.code, body.name, body.contact_name, body.email, body.phone, body.address, body.city, body.state, body.zip, body.lat, body.lng, body.customer_type || 'residential', body.tank_size || 500, body.price_per_gallon || 2.50, body.payment_terms || 'net30', body.delivery_instructions, body.auto_delivery || false, body.minimum_level || 20]
+            `INSERT INTO customers (company_id, preferred_dc_id, code, name, contact_name, email, phone, address, city, state, zip, lat, lng, customer_type, tank_size, price_per_gallon, payment_terms, delivery_instructions, auto_delivery, minimum_level, sales_rep_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING *`,
+            [companyId, preferredDcId, body.code, body.name, body.contact_name, body.email, body.phone, body.address, body.city, body.state, body.zip, body.lat, body.lng, body.customer_type || 'residential', body.tank_size || 500, body.price_per_gallon || 2.50, body.payment_terms || 'net30', body.delivery_instructions, body.auto_delivery || false, body.minimum_level || 20, body.sales_rep_id || null]
         );
         return success(result.rows[0], 201);
     }
@@ -935,9 +963,9 @@ async function handleCustomers(method, path, companyId, user, event) {
         const id = subPath.slice(1);
         const body = parseBody(event);
         const result = await query(
-            `UPDATE customers SET preferred_dc_id = $1, code = $2, name = $3, contact_name = $4, email = $5, phone = $6, address = $7, city = $8, state = $9, zip = $10, lat = $11, lng = $12, customer_type = $13, tank_size = $14, price_per_gallon = $15, payment_terms = $16, delivery_instructions = $17, auto_delivery = $18, minimum_level = $19, status = $20, current_level = $21, balance = $22
-            WHERE id = $23 AND company_id = $24 RETURNING *`,
-            [body.preferred_dc_id, body.code, body.name, body.contact_name, body.email, body.phone, body.address, body.city, body.state, body.zip, body.lat, body.lng, body.customer_type, body.tank_size, body.price_per_gallon, body.payment_terms, body.delivery_instructions, body.auto_delivery, body.minimum_level, body.status || 'active', body.current_level, body.balance, id, companyId]
+            `UPDATE customers SET preferred_dc_id = $1, code = $2, name = $3, contact_name = $4, email = $5, phone = $6, address = $7, city = $8, state = $9, zip = $10, lat = $11, lng = $12, customer_type = $13, tank_size = $14, price_per_gallon = $15, payment_terms = $16, delivery_instructions = $17, auto_delivery = $18, minimum_level = $19, status = $20, current_level = $21, balance = $22, sales_rep_id = $23
+            WHERE id = $24 AND company_id = $25 RETURNING *`,
+            [body.preferred_dc_id, body.code, body.name, body.contact_name, body.email, body.phone, body.address, body.city, body.state, body.zip, body.lat, body.lng, body.customer_type, body.tank_size, body.price_per_gallon, body.payment_terms, body.delivery_instructions, body.auto_delivery, body.minimum_level, body.status || 'active', body.current_level, body.balance, body.sales_rep_id || null, id, companyId]
         );
         if (result.rows.length === 0) return error('Not found', 404);
         return success(result.rows[0]);

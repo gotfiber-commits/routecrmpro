@@ -4,13 +4,14 @@
 // Analyzes customer history and seasonal patterns
 // to predict future orders and optimize route planning
 
-const { query } = require('./utils/db');
+const { query, setTenant } = require('./utils/db');
 const { success, error, parseBody } = require('./utils/response');
 const { authenticateRequest } = require('./utils/auth');
 
 exports.handler = async (event) => {
     try {
         const { user, companyId, role } = await authenticateRequest(event);
+        setTenant(companyId); // RLS tenant scope
         if (!user) return error('Unauthorized', 401);
 
         const method = event.httpMethod;

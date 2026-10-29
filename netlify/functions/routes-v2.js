@@ -2,6 +2,7 @@
 // Handles route-based delivery model (keep-full service)
 
 const { query } = require('./utils/db');
+const { setTenant } = require('./utils/db');
 const { requireAuth, requireRole } = require('./utils/auth');
 const { resolveTenant } = require('./utils/tenant');
 const { success, error, handleOptions, parseBody } = require('./utils/response');
@@ -30,6 +31,9 @@ exports.handler = async (event, context) => {
         if (tenant.resolved && tenant.company.id !== companyId) {
             return error('Unauthorized - company mismatch', 403);
         }
+
+        // Establish tenant scope so RLS applies to every query in this request.
+        setTenant(companyId);
 
         // My Routes - Driver-specific routes (uses driver_id from user)
         if (path === '/my-routes' && method === 'GET') {
@@ -1166,7 +1170,7 @@ async function handleRuns(method, path, companyId, user, event) {
 
         // Get stop info
         const stopInfo = await query(
-            `SELECT rrs.*, c.id as customer_id 
+            `SELECT rrs.*, c.id as customer_id, c.sales_rep_id as customer_sales_rep_id
              FROM route_run_stops rrs 
              JOIN customers c ON rrs.customer_id = c.id 
              WHERE rrs.id = $1 AND rrs.run_id = $2`,
@@ -1177,6 +1181,7 @@ async function handleRuns(method, path, companyId, user, event) {
         }
 
         const customerId = stopInfo.rows[0].customer_id;
+        const customerSalesRepId = stopInfo.rows[0].customer_sales_rep_id || null;
         const items = body.items || [];
         let itemsTotal = 0;
         let depositsCollected = 0;
@@ -1225,14 +1230,45 @@ async function handleRuns(method, path, companyId, user, event) {
             }
 
             // Insert delivery item record
-            await query(
+            const itemResult = await query(
                 `INSERT INTO delivery_items 
                  (company_id, stop_id, product_id, quantity_delivered, quantity_collected, 
                   unit_price, line_total, deposit_collected, deposit_refunded, notes)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 RETURNING id`,
                 [companyId, stopId, item.product_id, qtyDelivered, qtyCollected,
                  unitPrice, lineTotal, itemDepositsCollected, itemDepositsRefunded, item.notes]
             );
+            const deliveryItemId = itemResult.rows[0].id;
+
+            // --- Sales/commission attribution (stamp the rep at delivery time) ---
+            // Only stamp actual sales (something delivered with revenue).
+            if (qtyDelivered > 0 && lineTotal > 0) {
+                try {
+                    const unitType = (product.unit || 'each').toLowerCase();
+                    // Company-wide commission rate for this product's unit type
+                    const rateRes = await query(
+                        `SELECT rate_percent FROM commission_rates WHERE company_id = $1 AND unit_type = $2`,
+                        [companyId, unitType]
+                    );
+                    const ratePercent = rateRes.rows.length ? parseFloat(rateRes.rows[0].rate_percent) : 0;
+                    const commissionAmount = +(lineTotal * ratePercent / 100).toFixed(2);
+                    await query(
+                        `INSERT INTO sales_attributions
+                         (company_id, delivery_item_id, stop_id, customer_id, product_id,
+                          sales_rep_id, unit_type, quantity, revenue, rate_percent,
+                          commission_amount, sale_date, review_status)
+                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE($12::date, CURRENT_DATE), 'settled')
+                         ON CONFLICT (delivery_item_id) DO NOTHING`,
+                        [companyId, deliveryItemId, stopId, customerId, item.product_id,
+                         customerSalesRepId, unitType, qtyDelivered, lineTotal, ratePercent,
+                         commissionAmount, body.completed_at || null]
+                    );
+                } catch (attrErr) {
+                    // Never fail a delivery because commission stamping hit an issue.
+                    console.error('Sales attribution stamping failed (non-fatal):', attrErr.message);
+                }
+            }
 
             itemsTotal += lineTotal;
             depositsCollected += itemDepositsCollected;

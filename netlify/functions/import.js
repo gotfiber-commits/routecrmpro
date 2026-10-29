@@ -4,13 +4,14 @@
 // Handles CSV/JSON imports for customers and their delivery history
 // to populate the prediction system with historical data
 
-const { query } = require('./utils/db');
+const { query, setTenant } = require('./utils/db');
 const { success, error, parseBody } = require('./utils/response');
 const { authenticateRequest } = require('./utils/auth');
 
 exports.handler = async (event) => {
     try {
         const { user, companyId, role } = await authenticateRequest(event);
+        setTenant(companyId); // RLS tenant scope
         if (!user) return error('Unauthorized', 401);
 
         // Only admin can import

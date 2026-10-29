@@ -1,5 +1,5 @@
 // Tenant Billing API - For companies to view and pay their bills
-const { query } = require('./utils/db');
+const { query, setTenant } = require('./utils/db');
 const { requireAuth } = require('./utils/auth');
 const { resolveTenant } = require('./utils/tenant');
 const { success, error, handleOptions, parseBody } = require('./utils/response');
@@ -24,6 +24,7 @@ exports.handler = async (event, context) => {
         }
 
         const companyId = authResult.user.companyId;
+        setTenant(companyId); // RLS tenant scope
 
         // GET /tenant-billing - Get billing overview
         if (method === 'GET' && path === '') {

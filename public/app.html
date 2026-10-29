@@ -8,7 +8,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
     <script src="https://js.stripe.com/v3/"></script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDlnoisXs3xJAGtyYCBmLRCSuSN0hI2v98&libraries=places,geometry"></script>
+    <!-- Google Maps is loaded dynamically at runtime using the platform key
+         configured in the Super Admin console (no hardcoded API keys). See the
+         bootstrap loader at the bottom of this file. -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         /* ============================================
@@ -295,8 +297,18 @@
             color: var(--text-muted);
             margin-top: 2px;
         }
-        .sidebar-nav { flex: 1; padding: 0.75rem 0; }
-        .nav-item { 
+        .sidebar-nav { flex: 1; padding: 0.5rem 0; overflow-y: auto; }
+        .nav-section { margin-bottom: 0.5rem; }
+        .nav-section-title {
+            font-size: 0.68rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            padding: 0.6rem 1.5rem 0.35rem;
+            opacity: 0.65;
+        }
+        .nav-item {
             display: flex; 
             align-items: center; 
             gap: 0.85rem; 
@@ -1395,6 +1407,26 @@
             const [selectedCustomerId, setSelectedCustomerId] = useState(null);
             const [newCustomerPrefill, setNewCustomerPrefill] = useState(null); // Prefill add-customer form from map click
 
+            // Per-company Google Maps activation. The key is global (Super Admin),
+            // but each company must have maps enabled to actually load it.
+            const companyMapsEnabled = company?.google_maps_enabled === true;
+            const platformKeyPresent = !!window.__GMAPS_KEY__;
+            const [mapsReady, setMapsReady] = useState(false);
+            const [mapsError, setMapsError] = useState(null); // 'no_key' | 'load_failed' | null
+
+            useEffect(() => {
+                let cancelled = false;
+                if (companyMapsEnabled && platformKeyPresent) {
+                    window.loadGoogleMaps()
+                        .then(() => { if (!cancelled) setMapsReady(true); })
+                        .catch((err) => { if (!cancelled) setMapsError(err.message || 'load_failed'); });
+                }
+                return () => { cancelled = true; };
+            }, [companyMapsEnabled, platformKeyPresent]);
+
+            // Make the flag available to child map components without prop-drilling.
+            window.__MAPS_ENABLED__ = companyMapsEnabled && platformKeyPresent;
+
             useEffect(() => { loadData(); }, []);
 
             const loadData = async () => {
@@ -1415,32 +1447,56 @@
                 setMobileMenuOpen(false); // Close mobile menu on navigation
             };
 
-            const navItems = [
-                { id: 'dashboard', icon: '📊', label: 'Dashboard' },
-                { id: 'customers', icon: '👥', label: 'Customers' },
-                { id: 'orders', icon: '📦', label: 'Orders' },
-                { id: 'route-templates', icon: '🚀', label: 'Generate Routes' },
-                { id: 'active-routes', icon: '🚀', label: 'Active Routes' },
-                { id: 'trucks', icon: '🚚', label: 'Trucks' },
-                { id: 'drivers', icon: '👷', label: 'Drivers' },
-                { id: 'dcs', icon: '🏭', label: 'Distribution Centers' },
-                { id: 'predictions', icon: '🔮', label: 'Predictions' },
-                { id: 'prospects', icon: '🎯', label: 'Prospects' },
-                { id: 'import', icon: '📤', label: 'Import Data' },
-                { id: 'reports', icon: '📈', label: 'Reports' },
+            // Grouped navigation (enterprise IA). Routes = Generate + Active (tabs);
+            // Analytics = Reports + Predictions (tabs); Import lives under Settings.
+            const navSections = [
+                { title: 'Operations', items: [
+                    { id: 'dashboard', icon: '📊', label: 'Dashboard' },
+                    { id: 'customers', icon: '👥', label: 'Customers' },
+                    { id: 'orders', icon: '📦', label: 'Orders' },
+                    { id: 'routes', icon: '🚀', label: 'Routes' },
+                ]},
+                { title: 'Fleet', items: [
+                    { id: 'trucks', icon: '🚚', label: 'Trucks' },
+                    { id: 'drivers', icon: '👷', label: 'Drivers' },
+                    { id: 'dcs', icon: '🏭', label: 'Distribution Centers' },
+                ]},
+                { title: 'Insights', items: [
+                    { id: 'reports', icon: '📈', label: 'Analytics' },
+                    { id: 'sales', icon: '💰', label: 'Sales & Commission' },
+                ]},
             ];
-            
+
             if (user?.role === 'admin') {
-                navItems.push(
+                navSections.push({ title: 'Administration', items: [
                     { id: 'settings', icon: '⚙️', label: 'Settings' },
-                    { id: 'billing', icon: '💳', label: 'Billing' }
-                );
+                    { id: 'billing', icon: '💳', label: 'Billing' },
+                ]});
             }
 
-            const currentNavItem = navItems.find(item => item.id === activeView);
+            // Flattened lookup (includes legacy ids that still resolve to a view).
+            const allNavItems = navSections.flatMap(s => s.items);
+            const legacyLabels = {
+                'route-templates': { icon: '🚀', label: 'Routes' },
+                'active-routes': { icon: '🚀', label: 'Routes' },
+                'predictions': { icon: '📈', label: 'Analytics' },
+                'import': { icon: '⚙️', label: 'Settings' }
+            };
+            const currentNavItem = allNavItems.find(item => item.id === activeView)
+                || legacyLabels[activeView]
+                || { icon: '📊', label: 'Dashboard' };
 
             return (
                 <div className="dashboard">
+                    {(!companyMapsEnabled || mapsError) && (
+                        <div style={{position:'fixed',top:0,left:0,right:0,zIndex:2000,background:'#7f1d1d',color:'#fff',padding:'0.6rem 1rem',fontSize:'0.85rem',textAlign:'center'}}>
+                            {mapsError === 'load_failed'
+                                ? '⚠️ Google Maps failed to load — check the platform key and that the required Google APIs are enabled.'
+                                : !platformKeyPresent && companyMapsEnabled
+                                ? '⚠️ Maps is enabled for your company but no platform Google Maps key is set. A Super Admin must add it in the Admin console → Settings → Integrations.'
+                                : '🗺️ Maps are not enabled for your company. Contact your administrator to enable the Google Maps integration.'}
+                        </div>
+                    )}
                     {/* Mobile Header */}
                     <div className="mobile-header">
                         <button className="hamburger-btn" onClick={() => setMobileMenuOpen(true)}>☰</button>
@@ -1461,10 +1517,24 @@
                             </div>
                         </div>
                         <nav className="sidebar-nav">
-                            {navItems.map(item => (
-                                <div key={item.id} className={`nav-item ${activeView === item.id ? 'active' : ''}`} onClick={() => handleNavClick(item.id)}>
-                                    <span style={{ fontSize: '1.1rem' }}>{item.icon}</span>
-                                    <span>{item.label}</span>
+                            {navSections.map(section => (
+                                <div key={section.title} className="nav-section">
+                                    <div className="nav-section-title">{section.title}</div>
+                                    {section.items.map(item => {
+                                        // Keep the consolidated item highlighted when a legacy sub-view is open.
+                                        const aliases = {
+                                            'routes': ['routes', 'route-templates', 'active-routes'],
+                                            'reports': ['reports', 'predictions'],
+                                            'settings': ['settings', 'import']
+                                        };
+                                        const isActive = (aliases[item.id] || [item.id]).includes(activeView);
+                                        return (
+                                            <div key={item.id} className={`nav-item ${isActive ? 'active' : ''}`} onClick={() => handleNavClick(item.id)}>
+                                                <span style={{ fontSize: '1.1rem' }}>{item.icon}</span>
+                                                <span>{item.label}</span>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             ))}
                         </nav>
@@ -1485,7 +1555,7 @@
                             </div>
                         ) : (
                             <>
-                                {activeView === 'dashboard' && <DashboardView data={data} onRefresh={loadData} onNavigate={(view, extraData) => { 
+                                {activeView === 'dashboard' && <DashboardView data={data} onRefresh={loadData} mapsReady={mapsReady} mapsEnabled={companyMapsEnabled && platformKeyPresent} onNavigate={(view, extraData) => { 
                                     setActiveView(view); 
                                     if (view === 'customers' && extraData?.customerId) {
                                         setSelectedCustomerId(extraData.customerId);
@@ -1497,17 +1567,19 @@
                                 }} />}
                                 {activeView === 'customers' && <CustomersView data={data} onRefresh={loadData} selectedCustomerId={selectedCustomerId} onClearSelection={() => setSelectedCustomerId(null)} prefillCustomer={newCustomerPrefill} onClearPrefill={() => setNewCustomerPrefill(null)} />}
                                 {activeView === 'orders' && <OrdersView data={data} onRefresh={loadData} />}
-                                {activeView === 'route-templates' && <RouteTemplatesView data={data} onRefresh={loadData} />}
-                                {activeView === 'active-routes' && <ActiveRoutesView data={data} onRefresh={loadData} />}
-                                {activeView === 'routes' && <RoutesView data={data} onRefresh={loadData} />}
+                                {/* Routes hub: Generate + Active as tabs. Legacy ids deep-link to the right tab. */}
+                                {activeView === 'routes' && <RoutesHub data={data} onRefresh={loadData} initialTab="generate" />}
+                                {activeView === 'route-templates' && <RoutesHub data={data} onRefresh={loadData} initialTab="generate" />}
+                                {activeView === 'active-routes' && <RoutesHub data={data} onRefresh={loadData} initialTab="active" />}
                                 {activeView === 'trucks' && <TrucksView data={data} onRefresh={loadData} />}
                                 {activeView === 'drivers' && <DriversView data={data} onRefresh={loadData} />}
                                 {activeView === 'dcs' && <DCsView data={data} onRefresh={loadData} />}
                                 {activeView === 'settings' && <SettingsView data={data} onRefresh={loadData} />}
-                                {activeView === 'predictions' && <PredictionsView data={data} />}
-                                {activeView === 'prospects' && <ProspectsView data={data} onNavigate={setActiveView} />}
-                                {activeView === 'import' && <ImportView data={data} onRefresh={loadData} />}
-                                {activeView === 'reports' && <ReportsView data={data} />}
+                                {activeView === 'sales' && <SalesView data={data} onRefresh={loadData} />}
+                                {/* Analytics: Reports + Predictions as tabs. Legacy 'predictions' deep-links to that tab. */}
+                                {activeView === 'reports' && <ReportsView data={data} initialTab="dashboard" />}
+                                {activeView === 'predictions' && <ReportsView data={data} initialTab="predictions" />}
+                                {activeView === 'import' && <SettingsView data={data} onRefresh={loadData} initialTab="import" />}
                                 {activeView === 'billing' && <BillingView />}
                             </>
                         )}
@@ -1517,9 +1589,78 @@
         }
 
         // =====================================================
+        // Onboarding Checklist (first-run guided setup)
+        // =====================================================
+        function OnboardingChecklist({ data, onNavigate }) {
+            // Persist dismissal per-company so it doesn't nag forever.
+            const companyId = (() => { try { return JSON.parse(localStorage.getItem('company') || '{}').id || 'x'; } catch(e){ return 'x'; } })();
+            const dismissKey = 'onboarding_dismissed_' + companyId;
+            const [dismissed, setDismissed] = useState(() => {
+                try { return localStorage.getItem(dismissKey) === '1'; } catch(e){ return false; }
+            });
+
+            const steps = [
+                { id: 'dc',        label: 'Add a Distribution Center', desc: 'Where your trucks are based and routes begin.', view: 'dcs',            done: (data?.distributionCenters || []).length > 0, icon: '🏭' },
+                { id: 'products',  label: 'Set up Products & Services', desc: 'Tanks, bottles, or bulk gallons you deliver.',   view: 'products',       done: (data?.products || []).length > 0,            icon: '📦' },
+                { id: 'trucks',    label: 'Add your Trucks',            desc: 'Your delivery fleet and capacities.',           view: 'trucks',         done: (data?.trucks || []).length > 0,              icon: '🚚' },
+                { id: 'drivers',   label: 'Add your Drivers',           desc: 'Who drives the routes.',                        view: 'drivers',        done: (data?.drivers || []).length > 0,             icon: '👷' },
+                { id: 'customers', label: 'Add Customers',              desc: 'Import or add the stops you deliver to.',       view: 'customers',      done: (data?.customers || []).length > 0,           icon: '👥' },
+                { id: 'routes',    label: 'Generate your first Route',  desc: 'Optimize a delivery run from a DC.',            view: 'route-templates',done: (data?.routes || []).length > 0,              icon: '🚀' }
+            ];
+
+            const completed = steps.filter(s => s.done).length;
+            const total = steps.length;
+            const allDone = completed === total;
+
+            // Show while setup is incomplete (a brand-new signup starts at 0/6),
+            // unless the user dismissed it or has finished every step.
+            if (dismissed || allDone) return null;
+
+            const dismiss = () => {
+                try { localStorage.setItem(dismissKey, '1'); } catch(e){}
+                setDismissed(true);
+            };
+
+            const pct = Math.round((completed / total) * 100);
+
+            return (
+                <div className="card" style={{marginBottom:'1.5rem', border:'1px solid var(--primary, #6366F1)', background:'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(99,102,241,0.02))'}}>
+                    <div className="card-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.5rem'}}>
+                        <h3 style={{margin:0}}>👋 Welcome! Let's get you set up</h3>
+                        <button onClick={dismiss} title="Dismiss" style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'0.85rem'}}>Dismiss ✕</button>
+                    </div>
+                    <div style={{padding:'0 0.25rem'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:'0.75rem',margin:'0.5rem 0 1.25rem'}}>
+                            <div style={{flex:1,height:'8px',background:'var(--bg-dark, rgba(0,0,0,0.3))',borderRadius:'999px',overflow:'hidden'}}>
+                                <div style={{width:pct+'%',height:'100%',background:'#10B981',transition:'width 0.3s'}}></div>
+                            </div>
+                            <div style={{fontSize:'0.85rem',color:'var(--text-secondary)',whiteSpace:'nowrap',fontWeight:600}}>{completed} of {total} done</div>
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))',gap:'0.75rem'}}>
+                            {steps.map((s, i) => (
+                                <div key={s.id} onClick={() => !s.done && onNavigate && onNavigate(s.view)}
+                                    style={{display:'flex',alignItems:'flex-start',gap:'0.75rem',padding:'0.85rem 1rem',borderRadius:'10px',
+                                            background: s.done ? 'rgba(16,185,129,0.08)' : 'var(--bg-card, rgba(255,255,255,0.03))',
+                                            border:'1px solid ' + (s.done ? 'rgba(16,185,129,0.3)' : 'var(--border, rgba(255,255,255,0.08))'),
+                                            cursor: s.done ? 'default' : 'pointer', opacity: s.done ? 0.75 : 1, transition:'all 0.15s'}}>
+                                    <div style={{fontSize:'1.4rem',lineHeight:1,flexShrink:0}}>{s.done ? '✅' : s.icon}</div>
+                                    <div style={{flex:1,minWidth:0}}>
+                                        <div style={{fontWeight:600,fontSize:'0.9rem',textDecoration: s.done ? 'line-through' : 'none'}}>{s.label}</div>
+                                        <div style={{fontSize:'0.8rem',color:'var(--text-muted)',marginTop:'0.15rem'}}>{s.desc}</div>
+                                        {!s.done && <div style={{fontSize:'0.78rem',color:'var(--primary, #818CF8)',marginTop:'0.4rem',fontWeight:600}}>Set up →</div>}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // =====================================================
         // Dashboard View with Map and Places Search
         // =====================================================
-        function DashboardView({ data, onRefresh, onNavigate }) {
+        function DashboardView({ data, onRefresh, onNavigate, mapsReady, mapsEnabled }) {
             const mapRef = useRef(null);
             const mapInstance = useRef(null);
             const markersRef = useRef([]);
@@ -1531,6 +1672,29 @@
             const [addingCustomer, setAddingCustomer] = useState(false);
             const [selectedDCForAdd, setSelectedDCForAdd] = useState(''); // DC to assign new customer to
             const [addToRouteAfter, setAddToRouteAfter] = useState(false); // Re-optimize routes after adding
+
+            // --- Prospect finder (gas stations / convenience stores) state ---
+            const placesServiceRef = useRef(null);
+            const prospectMarkersRef = useRef([]);
+            const seenPlaceIds = useRef(new Set());
+            const prospectIdleListenerRef = useRef(null);
+            const prospectSearchTimerRef = useRef(null);
+            const apiModeRef = useRef('auto'); // 'auto' | 'new' | 'legacy'
+            const PROSPECT_AUTO_CAP = 40;
+            const [findProspects, setFindProspects] = useState(false);
+            const [prospects, setProspects] = useState([]);
+            const [prospectSearching, setProspectSearching] = useState(false);
+            const [prospectAutoCount, setProspectAutoCount] = useState(0);
+            const [prospectZoomWarning, setProspectZoomWarning] = useState(false);
+            const [showProspectReport, setShowProspectReport] = useState(false);
+            const [prospectEnriching, setProspectEnriching] = useState(false);
+            const [prospectEnrichProgress, setProspectEnrichProgress] = useState({ done: 0, total: 0 });
+            // Refs so the map's idle listener (long-lived closure) sees latest values
+            const findProspectsRef = useRef(findProspects);
+            useEffect(() => { findProspectsRef.current = findProspects; }, [findProspects]);
+            const prospectAutoCountRef = useRef(0);
+            useEffect(() => { prospectAutoCountRef.current = prospectAutoCount; }, [prospectAutoCount]);
+            const runProspectSearchRef = useRef(null);
             const [weatherDC, setWeatherDC] = useState(null);
             const [dcRoutes, setDcRoutes] = useState({});
             const [selectedDCForRoutes, setSelectedDCForRoutes] = useState(null);
@@ -1591,6 +1755,7 @@
             // Initialize map once (but wait for data to determine center)
             useEffect(() => {
                 if (!mapRef.current) return;
+                if (!mapsReady) return; // Wait until Google Maps is loaded for this company
                 
                 // Only initialize map once
                 if (!mapInstance.current) {
@@ -1698,6 +1863,7 @@
 
                     // Click on any place/business on the map to add as customer
                     const placesService = new google.maps.places.PlacesService(map);
+                    placesServiceRef.current = placesService;
                     let clickInfoWindow = null;
                     let clickMarker = null;
 
@@ -1716,7 +1882,62 @@
                                 placeId: event.placeId,
                                 fields: ['name', 'formatted_address', 'address_components', 'geometry', 'formatted_phone_number', 'website', 'types', 'business_status']
                             }, (place, status) => {
-                                if (status !== google.maps.places.PlacesServiceStatus.OK || !place) return;
+                                if (status !== google.maps.places.PlacesServiceStatus.OK || !place) {
+                                    // Don't fail silently — this is almost always the Places API
+                                    // (Details) not being enabled/authorized on the Google key.
+                                    console.error('Places getDetails failed:', status, '— check that "Places API" is enabled on your Google Maps key and billing is active.');
+                                    // Fall back: still let the user add a customer using the click location + reverse geocode.
+                                    const geocoder = new google.maps.Geocoder();
+                                    geocoder.geocode({ location: event.latLng }, (results, gStatus) => {
+                                        let street = '', city = '', state = '', zip = '', formatted = '';
+                                        if (gStatus === 'OK' && results && results[0]) {
+                                            formatted = results[0].formatted_address;
+                                            (results[0].address_components || []).forEach(comp => {
+                                                if (comp.types.includes('street_number')) street = comp.long_name + ' ';
+                                                if (comp.types.includes('route')) street += comp.long_name;
+                                                if (comp.types.includes('locality')) city = comp.long_name;
+                                                if (comp.types.includes('sublocality_level_1') && !city) city = comp.long_name;
+                                                if (comp.types.includes('administrative_area_level_1')) state = comp.short_name;
+                                                if (comp.types.includes('postal_code')) zip = comp.long_name;
+                                            });
+                                        }
+                                        const fallbackData = {
+                                            name: '', formatted_address: formatted,
+                                            address: street.trim(), city, state, zip,
+                                            lat: event.latLng.lat(), lng: event.latLng.lng(),
+                                            phone: '', website: '', types: []
+                                        };
+                                        setSearchedPlace(fallbackData);
+                                        clickMarker = new google.maps.Marker({
+                                            position: event.latLng, map, animation: google.maps.Animation.DROP,
+                                            icon: { path: google.maps.SymbolPath.CIRCLE, scale: 12, fillColor: '#F59E0B', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3 }
+                                        });
+                                        clickInfoWindow = new google.maps.InfoWindow({
+                                            content: `<div style="color:#333;min-width:230px;padding:6px 0">
+                                                <div style="font-weight:bold;font-size:14px;margin-bottom:4px">📍 Add Customer Here</div>
+                                                <div style="font-size:12px;color:#555;margin-bottom:8px">${formatted || 'Selected location'}</div>
+                                                <div style="font-size:11px;color:#999;margin-bottom:8px">Business details unavailable (Places API not enabled) — you can still add this location.</div>
+                                                <button id="fallback-add-customer-btn" style="width:100%;background:#6366F1;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px">+ Add as Customer</button>
+                                            </div>`,
+                                            position: event.latLng
+                                        });
+                                        clickInfoWindow.open(map);
+                                        google.maps.event.addListenerOnce(clickInfoWindow, 'domready', () => {
+                                            document.getElementById('fallback-add-customer-btn')?.addEventListener('click', () => {
+                                                const prefill = {
+                                                    code: 'CUST-' + Date.now().toString().slice(-6),
+                                                    name: '', address: fallbackData.address, city: fallbackData.city,
+                                                    state: fallbackData.state, zip: fallbackData.zip,
+                                                    lat: fallbackData.lat, lng: fallbackData.lng, customer_type: 'commercial'
+                                                };
+                                                clickInfoWindow.close();
+                                                if (clickMarker) clickMarker.setMap(null);
+                                                if (onNavigate) onNavigate('customers', { prefillCustomer: prefill });
+                                            });
+                                        });
+                                    });
+                                    return;
+                                }
 
                                 // Parse address components
                                 let street = '', city = '', state = '', zip = '';
@@ -1921,8 +2142,22 @@
                             });
                         });
                     });
+
+                    // Prospect auto-search: when enabled, search stores as the map settles
+                    prospectIdleListenerRef.current = map.addListener('idle', () => {
+                        if (prospectSearchTimerRef.current) clearTimeout(prospectSearchTimerRef.current);
+                        prospectSearchTimerRef.current = setTimeout(async () => {
+                            if (!findProspectsRef.current || !runProspectSearchRef.current) return;
+                            if (prospectAutoCountRef.current >= PROSPECT_AUTO_CAP) {
+                                setFindProspects(false);
+                                return;
+                            }
+                            const didSearch = await runProspectSearchRef.current();
+                            if (didSearch) setProspectAutoCount(c => c + 1);
+                        }, 600);
+                    });
                 }
-            }, [data?.distributionCenters?.length]);
+            }, [data?.distributionCenters?.length, mapsReady]);
 
             // Update markers when data changes (separate from map init)
             useEffect(() => {
@@ -2009,7 +2244,8 @@
                 (data?.customers || []).slice(0, 200).forEach(cust => {
                     if (!cust.lat || !cust.lng) return;
                     const level = parseFloat(cust.current_level) || 0;
-                    const color = level < 25 ? '#EF4444' : level < 50 ? '#F59E0B' : '#10B981';
+                    const levelColor = level < 25 ? '#EF4444' : level < 50 ? '#F59E0B' : '#10B981'; // for tank badge only
+                    const color = '#10B981'; // customers are always green dots (red is reserved for prospects)
                     const marker = new google.maps.Marker({
                         position: { lat: parseFloat(cust.lat), lng: parseFloat(cust.lng) },
                         map, title: cust.name, zIndex: 100,
@@ -2020,7 +2256,7 @@
                             <div style="font-weight:700;margin-bottom:4px">${cust.name}</div>
                             <div style="font-size:0.82rem;color:#555">${cust.address || ''}<br/>${cust.city || ''}, ${cust.state || ''}</div>
                             <div style="margin:8px 0;display:flex;gap:6px;font-size:0.78rem">
-                                <div style="background:${level < 25 ? '#fef2f2' : level < 50 ? '#fffbeb' : '#f0fdf4'};padding:3px 8px;border-radius:4px;font-weight:600;color:${color}">
+                                <div style="background:${level < 25 ? '#fef2f2' : level < 50 ? '#fffbeb' : '#f0fdf4'};padding:3px 8px;border-radius:4px;font-weight:600;color:${levelColor}">
                                     Tank: ${level}%
                                 </div>
                                 <div style="background:#f0f0f5;padding:3px 8px;border-radius:4px">
@@ -2105,6 +2341,267 @@
                 }
             };
 
+            // ===== PROSPECT FINDER HELPERS =====
+            const prospectDistanceMiles = (lat1, lng1, lat2, lng2) => {
+                const R = 3959;
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLng = (lng2 - lng1) * Math.PI / 180;
+                const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2;
+                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            };
+            const prospectNearestDC = (lat, lng) => {
+                let best = null;
+                (data?.distributionCenters || []).forEach(dc => {
+                    if (!dc.lat || !dc.lng) return;
+                    const d = prospectDistanceMiles(lat, lng, parseFloat(dc.lat), parseFloat(dc.lng));
+                    if (!best || d < best.miles) best = { name: dc.name, miles: d };
+                });
+                return best;
+            };
+            const prospectIsCustomer = (lat, lng) => {
+                const customers = data?.customers || [];
+                for (const c of customers) {
+                    if (!c.lat || !c.lng) continue;
+                    if (prospectDistanceMiles(lat, lng, parseFloat(c.lat), parseFloat(c.lng)) < 0.037) return true; // ~60m
+                }
+                return false;
+            };
+
+            // Add a red prospect marker with an "Add as Customer" popup
+            const addProspectMarker = (p) => {
+                const map = mapInstance.current;
+                if (!map) return;
+                const marker = new google.maps.Marker({
+                    position: { lat: p.lat, lng: p.lng },
+                    map, title: p.name, zIndex: 90,
+                    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: '#EF4444', fillOpacity: 0.9, strokeColor: '#fff', strokeWeight: 2 }
+                });
+                const esc = (s) => String(s || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+                const dc = prospectNearestDC(p.lat, p.lng);
+                const infoContent = document.createElement('div');
+                infoContent.innerHTML = `<div style="color:#333;min-width:210px;font-family:system-ui,sans-serif">
+                    <div style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:600;background:#fef2f2;color:#EF4444;margin-bottom:6px">◯ PROSPECT</div>
+                    <div style="font-weight:700;font-size:0.95rem;margin-bottom:4px">${esc(p.name)}</div>
+                    <div style="font-size:0.8rem;color:#555;margin-bottom:6px">${esc(p.vicinity)}</div>
+                    ${dc ? `<div style="font-size:0.78rem;color:#666;margin-bottom:8px">Nearest DC: ${esc(dc.name)} (${dc.miles.toFixed(1)} mi)</div>` : ''}
+                    <button id="prospect-add-${p.place_id}" style="width:100%;background:#6366F1;color:white;border:none;padding:7px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600">+ Add as Customer</button>
+                </div>`;
+                const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+                marker.addListener('click', () => infoWindow.open(map, marker));
+                google.maps.event.addListener(infoWindow, 'domready', () => {
+                    document.getElementById(`prospect-add-${p.place_id}`)?.addEventListener('click', () => {
+                        infoWindow.close();
+                        // Fetch phone/website first, then hand off to the pre-filled customer form
+                        enrichProspect(p.place_id).then(details => {
+                            // Parse a US formatted address like "2601 Dawson Rd, Albany, GA 31707, USA"
+                            const full = details?.address || p.vicinity || '';
+                            let street = full, city = '', state = '', zip = '';
+                            const parts = full.split(',').map(s => s.trim()).filter(Boolean);
+                            // Drop trailing country segment if present
+                            if (parts.length && /^(USA|United States)$/i.test(parts[parts.length - 1])) parts.pop();
+                            if (parts.length >= 3) {
+                                street = parts[0];
+                                city = parts[1];
+                                const m = parts[2].match(/^([A-Za-z]{2})\s*(\d{5}(?:-\d{4})?)?/);
+                                if (m) { state = m[1].toUpperCase(); zip = m[2] || ''; }
+                                else { state = parts[2]; }
+                            } else if (parts.length === 2) {
+                                street = parts[0];
+                                const m = parts[1].match(/^(.*?)\s*([A-Za-z]{2})\s*(\d{5}(?:-\d{4})?)?$/);
+                                if (m) { city = m[1].trim(); state = (m[2] || '').toUpperCase(); zip = m[3] || ''; }
+                                else { city = parts[1]; }
+                            }
+                            const prefill = {
+                                code: 'CUST-' + Date.now().toString().slice(-6),
+                                name: p.name || '',
+                                address: street || '',
+                                city: city || '',
+                                state: state || '',
+                                zip: zip || '',
+                                lat: p.lat,
+                                lng: p.lng,
+                                phone: details?.phone || '',
+                                customer_type: 'commercial'
+                            };
+                            if (onNavigate) onNavigate('customers', { prefillCustomer: prefill });
+                        });
+                    });
+                });
+                prospectMarkersRef.current.push(marker);
+            };
+
+            // Normalize one place result and record it
+            const handleProspectResult = ({ place_id, name, vicinity, lat, lng }) => {
+                if (!place_id || seenPlaceIds.current.has(place_id)) return;
+                seenPlaceIds.current.add(place_id);
+                if (prospectIsCustomer(lat, lng)) return; // already a customer (green dot handles it)
+                const dc = prospectNearestDC(lat, lng);
+                addProspectMarker({ place_id, name, vicinity, lat, lng });
+                setProspects(prev => [...prev, {
+                    place_id, name, vicinity, lat, lng,
+                    nearestDcName: dc?.name || '-',
+                    nearestDcMiles: dc ? dc.miles.toFixed(1) : '-',
+                    phone: null, website: null, address: null, enriched: false
+                }]);
+            };
+
+            const searchProspectsNewAPI = async (map) => {
+                if (!(google.maps.places.Place && google.maps.places.Place.searchNearby)) return false;
+                const bounds = map.getBounds();
+                const center = map.getCenter();
+                if (!bounds || !center) return false;
+                const ne = bounds.getNorthEast(), sw = bounds.getSouthWest();
+                let radius = 5000;
+                if (google.maps.geometry?.spherical) {
+                    radius = Math.min(Math.max(google.maps.geometry.spherical.computeDistanceBetween(ne, sw) / 2, 100), 50000);
+                }
+                const { places } = await google.maps.places.Place.searchNearby({
+                    fields: ['id', 'displayName', 'location', 'formattedAddress'],
+                    locationRestriction: { center: { lat: center.lat(), lng: center.lng() }, radius },
+                    includedPrimaryTypes: ['gas_station', 'convenience_store'],
+                    maxResultCount: 20
+                });
+                (places || []).forEach(place => {
+                    if (!place.location) return;
+                    handleProspectResult({
+                        place_id: place.id,
+                        name: (place.displayName && place.displayName.text) || place.displayName || 'Unknown',
+                        vicinity: place.formattedAddress || '',
+                        lat: place.location.lat(),
+                        lng: place.location.lng()
+                    });
+                });
+                return true;
+            };
+
+            const searchProspectsLegacyAPI = (map) => new Promise((resolve) => {
+                const svc = placesServiceRef.current;
+                if (!svc) return resolve(false);
+                const bounds = map.getBounds();
+                if (!bounds) return resolve(false);
+                const types = ['gas_station', 'convenience_store'];
+                let pending = types.length, anyOk = false;
+                types.forEach(type => {
+                    svc.nearbySearch({ bounds, type }, (results, status) => {
+                        if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+                            anyOk = true;
+                            results.forEach(place => {
+                                if (!place.geometry?.location) return;
+                                handleProspectResult({
+                                    place_id: place.place_id,
+                                    name: place.name || 'Unknown',
+                                    vicinity: place.vicinity || '',
+                                    lat: place.geometry.location.lat(),
+                                    lng: place.geometry.location.lng()
+                                });
+                            });
+                        }
+                        pending--;
+                        if (pending === 0) resolve(anyOk);
+                    });
+                });
+            });
+
+            // Returns true if a search actually ran (passed the zoom guard)
+            const runProspectSearch = async () => {
+                const map = mapInstance.current;
+                if (!map) return false;
+                if (map.getZoom() < 12) { setProspectZoomWarning(true); return false; }
+                setProspectZoomWarning(false);
+                setProspectSearching(true);
+                try {
+                    if (apiModeRef.current === 'auto' || apiModeRef.current === 'new') {
+                        try {
+                            const ok = await searchProspectsNewAPI(map);
+                            if (ok) { apiModeRef.current = 'new'; return true; }
+                            apiModeRef.current = 'legacy';
+                        } catch (err) {
+                            console.warn('New Places API unavailable, using legacy:', err?.message || err);
+                            apiModeRef.current = 'legacy';
+                        }
+                    }
+                    await searchProspectsLegacyAPI(map);
+                    return true;
+                } catch (err) {
+                    console.error('Prospect search failed:', err);
+                    return true;
+                } finally {
+                    setProspectSearching(false);
+                }
+            };
+            runProspectSearchRef.current = runProspectSearch;
+
+            // Fetch phone/website for one prospect (new API first, legacy fallback)
+            const enrichProspect = async (placeId) => {
+                if (apiModeRef.current === 'new' && google.maps.places.Place) {
+                    try {
+                        const place = new google.maps.places.Place({ id: placeId });
+                        await place.fetchFields({ fields: ['nationalPhoneNumber', 'websiteURI', 'formattedAddress'] });
+                        return { phone: place.nationalPhoneNumber || '', website: place.websiteURI || '', address: place.formattedAddress || '' };
+                    } catch (err) { /* fall through to legacy */ }
+                }
+                return new Promise((resolve) => {
+                    const svc = placesServiceRef.current;
+                    if (!svc) return resolve(null);
+                    svc.getDetails({ placeId, fields: ['formatted_phone_number', 'website', 'formatted_address'] }, (place, status) => {
+                        if (status === google.maps.places.PlacesServiceStatus.OK && place) {
+                            resolve({ phone: place.formatted_phone_number || '', website: place.website || '', address: place.formatted_address || '' });
+                        } else resolve(null);
+                    });
+                });
+            };
+
+            // Enrich all prospects for the report
+            const buildProspectReport = async () => {
+                setShowProspectReport(true);
+                const toEnrich = prospects.filter(p => !p.enriched);
+                if (toEnrich.length === 0) return;
+                setProspectEnriching(true);
+                setProspectEnrichProgress({ done: 0, total: toEnrich.length });
+                for (let i = 0; i < toEnrich.length; i++) {
+                    const p = toEnrich[i];
+                    const details = await enrichProspect(p.place_id);
+                    setProspects(prev => prev.map(x => x.place_id === p.place_id
+                        ? { ...x, phone: details?.phone || '', website: details?.website || '', address: details?.address || x.vicinity, enriched: true }
+                        : x));
+                    setProspectEnrichProgress({ done: i + 1, total: toEnrich.length });
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                setProspectEnriching(false);
+            };
+
+            const exportProspectCSV = () => {
+                const headers = ['Name', 'Address', 'Phone', 'Website', 'Nearest DC', 'Distance (mi)', 'Latitude', 'Longitude'];
+                const rows = prospects.map(p => [p.name, p.address || p.vicinity || '', p.phone || '', p.website || '', p.nearestDcName, p.nearestDcMiles, p.lat.toFixed(6), p.lng.toFixed(6)]);
+                const csv = [headers, ...rows].map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `prospect-report-${new Date().toISOString().split('T')[0]}.csv`; a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const clearProspects = () => {
+                prospectMarkersRef.current.forEach(m => m.setMap(null));
+                prospectMarkersRef.current = [];
+                seenPlaceIds.current = new Set();
+                setProspects([]);
+            };
+
+            // Toggling the finder off clears markers & results
+            const toggleFindProspects = () => {
+                if (findProspects) {
+                    setFindProspects(false);
+                    clearProspects();
+                    setProspectZoomWarning(false);
+                } else {
+                    setFindProspects(true);
+                    setProspectAutoCount(0);
+                    // Kick off an immediate search for the current view
+                    setTimeout(() => { if (runProspectSearchRef.current) runProspectSearchRef.current().then(ok => { if (ok) setProspectAutoCount(c => c + 1); }); }, 100);
+                }
+            };
+
             const pendingOrders = (data?.orders || []).filter(o => o.status === 'pending').length;
             const [activeRuns, setActiveRuns] = useState(0);
             const [routeTemplates, setRouteTemplates] = useState(0);
@@ -2132,6 +2629,8 @@
                 <>
                     <div className="page-header"><h1 className="page-title">📊 Dashboard</h1></div>
 
+                    <OnboardingChecklist data={data} onNavigate={onNavigate} />
+
                     {/* Operations Map - PRIMARY VIEW */}
                     <div className="card">
                         <div className="card-header" style={{flexWrap:'wrap',gap:'0.75rem'}}>
@@ -2158,20 +2657,56 @@
                                 </div>
                             </div>
                         </div>
-                        {/* Weather Radar + Legend Bar */}
+                        {/* Weather Radar + Prospect Finder + Legend Bar */}
                         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0.5rem 1rem',background:'var(--bg-dark)',borderBottom:'1px solid var(--border)',flexWrap:'wrap',gap:'0.5rem'}}>
-                            <WeatherControl mapRef={mapInstance} />
-                            <div style={{fontSize:'0.75rem',color:'var(--text-muted)',display:'flex',gap:'0.75rem',flexWrap:'wrap'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:'0.75rem',flexWrap:'wrap'}}>
+                                <WeatherControl mapRef={mapInstance} />
+                                <button
+                                    className={`btn btn-sm ${findProspects ? 'btn-danger' : 'btn-secondary'}`}
+                                    onClick={toggleFindProspects}
+                                    title="Find gas stations & convenience stores that aren't customers yet"
+                                >
+                                    🎯 {findProspects ? 'Finding Prospects' : 'Find Prospects'}
+                                </button>
+                                {findProspects && (
+                                    <>
+                                        {prospectSearching && <span style={{fontSize:'0.75rem',color:'var(--text-muted)'}}><span className="spinner" style={{width:'12px',height:'12px',marginRight:'0.3rem'}}></span>Searching...</span>}
+                                        <span style={{fontSize:'0.75rem',color: prospectAutoCount >= PROSPECT_AUTO_CAP - 5 ? 'var(--warning)' : 'var(--text-muted)'}}>{PROSPECT_AUTO_CAP - prospectAutoCount} left</span>
+                                        {prospects.length > 0 && (
+                                            <button className="btn btn-primary btn-sm" onClick={buildProspectReport}>
+                                                📋 Report ({prospects.length})
+                                            </button>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                            <div style={{fontSize:'0.75rem',color:'var(--text-muted)',display:'flex',gap:'0.75rem',flexWrap:'wrap',alignItems:'center'}}>
                                 <span>🏭 DCs</span>
-                                <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#10B981'}}></span>OK</span>
-                                <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#F59E0B'}}></span>Low</span>
-                                <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#EF4444'}}></span>Critical</span>
+                                <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#10B981'}}></span>Customers</span>
+                                {findProspects && <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#EF4444'}}></span>Prospects</span>}
                                 <span style={{display:'flex',alignItems:'center',gap:'3px'}}><span style={{width:'8px',height:'8px',borderRadius:'50%',background:'#8B5CF6'}}></span>Search</span>
                                 <span style={{borderLeft:'1px solid var(--border)',paddingLeft:'0.75rem',color:'#F59E0B'}}>💡 Click businesses or right-click anywhere to add customers</span>
                             </div>
                         </div>
-                        <div className="map-container" style={{height:'600px'}}>
+                        {prospectZoomWarning && findProspects && (
+                            <div style={{padding:'0.5rem 1rem',background:'rgba(245,158,11,0.1)',borderBottom:'1px solid var(--warning)',fontSize:'0.8rem',color:'var(--warning-light)'}}>
+                                ⚠️ Zoom in closer to search for prospect stores (reduces API cost and result overload).
+                            </div>
+                        )}
+                        <div className="map-container" style={{height:'600px', position:'relative'}}>
                             <div ref={mapRef} id="dashboard-map"></div>
+                            {!mapsEnabled && (
+                                <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'var(--bg-dark)',color:'var(--text-muted)',textAlign:'center',padding:'2rem'}}>
+                                    <div style={{fontSize:'3rem',marginBottom:'1rem',opacity:0.4}}>🗺️</div>
+                                    <div style={{fontSize:'1.05rem',fontWeight:600,marginBottom:'0.4rem',color:'var(--text-secondary)'}}>Maps not enabled</div>
+                                    <div style={{fontSize:'0.9rem',maxWidth:'420px'}}>The Google Maps integration is turned off for your company. Ask your administrator to enable it.</div>
+                                </div>
+                            )}
+                            {mapsEnabled && !mapsReady && (
+                                <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'var(--bg-dark)',color:'var(--text-muted)'}}>
+                                    <span className="spinner" style={{marginRight:'0.5rem'}}></span> Loading map...
+                                </div>
+                            )}
                         </div>
                         {/* DC Quick-Access Bar */}
                         {(data?.distributionCenters || []).length > 0 && (
@@ -2506,6 +3041,48 @@
                                     <div style={{marginTop:'1rem', padding:'1rem', background:'var(--bg-dark)', borderRadius:'8px', fontSize:'0.85rem', color:'var(--text-secondary)'}}>
                                         <strong>💡 How this forecast works:</strong> Predictions are based on each customer's historical delivery frequency, 
                                         assigned products, and seasonal adjustment factors. Use this to plan inventory orders and ensure adequate stock levels.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Prospect "Red Dot" Report Modal */}
+                    {showProspectReport && (
+                        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowProspectReport(false)}>
+                            <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'900px', width:'95%'}}>
+                                <div className="modal-header">
+                                    <h2>📋 Prospect Report — {prospects.length} stores</h2>
+                                    <button className="close-btn" onClick={() => setShowProspectReport(false)}>×</button>
+                                </div>
+                                <div className="modal-body">
+                                    {prospectEnriching && (
+                                        <div style={{background:'var(--bg-dark)',padding:'0.75rem 1rem',borderRadius:'8px',marginBottom:'1rem',fontSize:'0.9rem'}}>
+                                            <span className="spinner" style={{width:'14px',height:'14px',marginRight:'0.5rem'}}></span>
+                                            Gathering contact info... {prospectEnrichProgress.done}/{prospectEnrichProgress.total}
+                                        </div>
+                                    )}
+                                    <div style={{marginBottom:'1rem',display:'flex',justifyContent:'flex-end'}}>
+                                        <button className="btn btn-success btn-sm" onClick={exportProspectCSV} disabled={prospectEnriching}>⬇️ Export to CSV</button>
+                                    </div>
+                                    <div style={{maxHeight:'500px',overflowY:'auto'}}>
+                                        <table className="data-table" style={{fontSize:'0.85rem'}}>
+                                            <thead>
+                                                <tr><th>Name</th><th>Address</th><th>Phone</th><th>Website</th><th>Nearest DC</th><th>Dist (mi)</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                {prospects.map(p => (
+                                                    <tr key={p.place_id}>
+                                                        <td><strong>{p.name}</strong></td>
+                                                        <td>{p.address || p.vicinity || '-'}</td>
+                                                        <td>{p.enriched ? (p.phone || '—') : '...'}</td>
+                                                        <td>{p.enriched ? (p.website ? <a href={p.website} target="_blank" rel="noopener noreferrer" style={{color:'var(--primary)'}}>Link</a> : '—') : '...'}</td>
+                                                        <td>{p.nearestDcName}</td>
+                                                        <td>{p.nearestDcMiles}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 </div>
                             </div>
@@ -3170,8 +3747,8 @@
             const [searchFilter, setSearchFilter] = useState(''); // Search by name/code
 
             const dcOptions = (data?.distributionCenters || []).map(dc => ({ value: dc.id, label: dc.name }));
+            const salesRepOptions = [{ value: '', label: '— None —' }].concat((data?.salesReps || []).map(r => ({ value: r.id, label: r.name })));
             
-            // Filter customers by DC and search term
             const filteredCustomers = (data?.customers || []).filter(c => {
                 let matchesDC = true;
                 if (dcFilter === 'unassigned') {
@@ -3415,6 +3992,7 @@
                         <CustomerFormModal
                             editItem={editItem}
                             dcOptions={dcOptions}
+                            salesRepOptions={salesRepOptions}
                             products={products}
                             onSave={handleSave}
                             onClose={() => { setShowModal(false); setEditItem(null); }}
@@ -3426,7 +4004,7 @@
         }
 
         // Customer Form Modal with Address Autocomplete and Product Assignment
-        function CustomerFormModal({ editItem, dcOptions, products, onSave, onClose, loading }) {
+        function CustomerFormModal({ editItem, dcOptions, salesRepOptions, products, onSave, onClose, loading }) {
             const defaultData = { status: 'active', customer_type: 'residential', tank_size: 500, current_level: 50, price_per_gallon: 2.50, payment_terms: 'net30', minimum_level: 20 };
             // Existing customer (has id) → use as-is. New/prefilled (no id) → layer prefill over defaults.
             const isExisting = !!(editItem && editItem.id);
@@ -3593,6 +4171,10 @@
                                         { value: 'industrial', label: 'Industrial' }
                                     ]} />
                                     <FormInput name="preferred_dc_id" label="Preferred DC" type="select" value={formData.preferred_dc_id} onChange={handleFieldChange} options={dcOptions} />
+                                </div>
+
+                                <div className="form-row">
+                                    <FormInput name="sales_rep_id" label="Sales Rep" type="select" value={formData.sales_rep_id || ''} onChange={handleFieldChange} options={salesRepOptions || [{ value: '', label: '— None —' }]} />
                                 </div>
                                 
                                 {/* Only show gallon-specific fields if no products defined (bulk gallon mode) */}
@@ -4413,9 +4995,42 @@
         }
 
         // =====================================================
+        // ROUTES HUB - Generate + Active routes as tabs
+        // =====================================================
+        function RoutesHub({ data, onRefresh, initialTab }) {
+            const [tab, setTab] = useState(initialTab || 'generate');
+            const tabBtn = (id, label, icon) => (
+                <button
+                    onClick={() => setTab(id)}
+                    style={{
+                        padding: '0.6rem 1.25rem', border: 'none', cursor: 'pointer',
+                        fontSize: '0.92rem', fontWeight: 600, borderRadius: '8px',
+                        background: tab === id ? 'var(--primary, #6366F1)' : 'transparent',
+                        color: tab === id ? '#fff' : 'var(--text-secondary)',
+                        transition: 'all 0.15s'
+                    }}>
+                    {icon} {label}
+                </button>
+            );
+            return (
+                <>
+                    <div className="page-header" style={{marginBottom:'1rem'}}>
+                        <h1 className="page-title">🚀 Routes</h1>
+                    </div>
+                    <div style={{display:'flex', gap:'0.5rem', marginBottom:'1.5rem', background:'var(--bg-card, rgba(255,255,255,0.03))', padding:'0.35rem', borderRadius:'10px', width:'fit-content', border:'1px solid var(--border, rgba(255,255,255,0.08))'}}>
+                        {tabBtn('generate', 'Generate Routes', '🧭')}
+                        {tabBtn('active', 'Active Routes', '📍')}
+                    </div>
+                    {tab === 'generate' && <RouteTemplatesView data={data} onRefresh={onRefresh} embedded={true} />}
+                    {tab === 'active' && <ActiveRoutesView data={data} onRefresh={onRefresh} embedded={true} />}
+                </>
+            );
+        }
+
+        // =====================================================
         // ROUTE TEMPLATES VIEW - Route All Customers
         // =====================================================
-        function RouteTemplatesView({ data, onRefresh }) {
+        function RouteTemplatesView({ data, onRefresh, embedded }) {
             const [generating, setGenerating] = useState(false);
             const [generatedRoutes, setGeneratedRoutes] = useState([]);
             const [selectedDC, setSelectedDC] = useState('');
@@ -4485,6 +5100,7 @@
             // Initialize map
             useEffect(() => {
                 if (!mapRef.current || mapInstance.current) return;
+                if (!(window.__MAPS_ENABLED__ && window.__GOOGLE_MAPS_READY__)) return;
                 
                 const firstDC = dcs.find(dc => dc.lat && dc.lng);
                 const map = new google.maps.Map(mapRef.current, {
@@ -5316,7 +5932,7 @@
                 <>
                     <div className="page-header">
                         <div>
-                            <h1>🚀 Generate Routes</h1>
+                            {!embedded && <h1>🚀 Generate Routes</h1>}
                             <p className="text-muted">Select a DC to generate optimized routes for all customers</p>
                         </div>
                         <button className="btn btn-secondary" onClick={() => setShowSettings(!showSettings)}>
@@ -5719,7 +6335,7 @@
         // =====================================================
         // ACTIVE ROUTES VIEW - Route Runs in Progress
         // =====================================================
-        function ActiveRoutesView({ data, onRefresh }) {
+        function ActiveRoutesView({ data, onRefresh, embedded }) {
             const [runs, setRuns] = useState([]);
             const [loading, setLoading] = useState(true);
             const [selectedRun, setSelectedRun] = useState(null);
@@ -5927,7 +6543,7 @@
                 <>
                     <div className="page-header">
                         <div>
-                            <h1>🚀 Active Routes</h1>
+                            {!embedded && <h1>🚀 Active Routes</h1>}
                             <p className="text-muted">Today's routes and route history</p>
                         </div>
                         <div style={{display:'flex',gap:'0.5rem'}}>
@@ -6071,6 +6687,7 @@
             // Initialize and update route map
             useEffect(() => {
                 if (!showRouteMap || !routeDetailMapRef.current || !runData) return;
+                if (!(window.__MAPS_ENABLED__ && window.__GOOGLE_MAPS_READY__)) return;
                 
                 // Clean up previous map instance
                 if (routeDetailMapInstance.current) {
@@ -7044,6 +7661,7 @@
             // Initialize map
             useEffect(() => {
                 if (!mapRef.current || mapInstance.current) return;
+                if (!(window.__MAPS_ENABLED__ && window.__GOOGLE_MAPS_READY__)) return;
 
                 // Find company headquarters (first DC or primary DC)
                 const headquarters = (data?.distributionCenters || []).find(dc => dc.is_headquarters || dc.is_primary) 
@@ -8824,13 +9442,14 @@
         // =====================================================
         // SETTINGS VIEW - Consolidated Settings Hub
         // =====================================================
-        function SettingsView({ data, onRefresh }) {
-            const [activeTab, setActiveTab] = useState('company');
+        function SettingsView({ data, onRefresh, initialTab }) {
+            const [activeTab, setActiveTab] = useState(initialTab || 'company');
 
             const tabs = [
                 { id: 'company', icon: '🏢', label: 'Company' },
                 { id: 'products', icon: '📦', label: 'Products & Services' },
                 { id: 'users', icon: '👤', label: 'Users' },
+                { id: 'import', icon: '📤', label: 'Import Data' },
                 { id: 'integrations', icon: '🔗', label: 'Integrations' },
             ];
 
@@ -8870,6 +9489,7 @@
                     {activeTab === 'company' && <CompanySettingsContent onRefresh={onRefresh} />}
                     {activeTab === 'products' && <ProductsContent onRefresh={onRefresh} />}
                     {activeTab === 'users' && <UsersContent data={data} onRefresh={onRefresh} />}
+                    {activeTab === 'import' && <ImportView data={data} onRefresh={onRefresh} embedded={true} />}
                     {activeTab === 'integrations' && <IntegrationsContent data={data} onRefresh={onRefresh} />}
                 </>
             );
@@ -9398,7 +10018,7 @@
         // =====================================================
         // PREDICTIONS VIEW - AI-Powered Order Predictions
         // =====================================================
-        function PredictionsView({ data }) {
+        function PredictionsView({ data, embedded }) {
             const [predictions, setPredictions] = useState([]);
             const [dashboard, setDashboard] = useState(null);
             const [loading, setLoading] = useState(true);
@@ -9551,8 +10171,8 @@
             return (
                 <>
                     <div className="page-header">
-                        <h1>🔮 Predictions & Forecasting</h1>
-                        <div style={{display:'flex', gap:'0.5rem'}}>
+                        {!embedded && <h1>🔮 Predictions & Forecasting</h1>}
+                        <div style={{display:'flex', gap:'0.5rem', marginLeft: embedded ? 'auto' : '0'}}>
                             <button className="btn btn-secondary" onClick={() => setShowSeasonalModal(true)}>
                                 📅 Seasonal Factors
                             </button>
@@ -10183,504 +10803,312 @@
         }
 
         // =====================================================
-        // PROSPECTS VIEW - Gas Station / Convenience Store Lead Finder
+        // SALES & COMMISSION VIEW
         // =====================================================
-        function ProspectsView({ data, onNavigate }) {
-            const mapRef = useRef(null);
-            const mapInstance = useRef(null);
-            const placesServiceRef = useRef(null);
-            const markersRef = useRef([]);
-            const seenPlaceIds = useRef(new Set());   // Dedup across searches
-            const idleListenerRef = useRef(null);
-            const searchTimerRef = useRef(null);
+        function SalesView({ data, onRefresh }) {
+            const [tab, setTab] = useState('report'); // report | reps | rates | holding
+            const [period, setPeriod] = useState('month'); // week | month | year
+            const [report, setReport] = useState(null);
+            const [reps, setReps] = useState([]);
+            const [rates, setRates] = useState([]);
+            const [holding, setHolding] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [msg, setMsg] = useState('');
 
-            const [autoSearch, setAutoSearch] = useState(true);
-            const [searching, setSearching] = useState(false);
-            const [prospects, setProspects] = useState([]);   // Non-customer stores
-            const [matchedCustomers, setMatchedCustomers] = useState(0);
-            const [zoomWarning, setZoomWarning] = useState(false);
-            const [showReport, setShowReport] = useState(false);
-            const [enriching, setEnriching] = useState(false);
-            const [enrichProgress, setEnrichProgress] = useState({ done: 0, total: 0 });
+            const money = (n) => '$' + (parseFloat(n || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-            // Per-session auto-search cap to control API cost
-            const AUTO_SEARCH_CAP = 40;
-            const [autoSearchCount, setAutoSearchCount] = useState(0);
-            const autoSearchCountRef = useRef(0);
-            useEffect(() => { autoSearchCountRef.current = autoSearchCount; }, [autoSearchCount]);
-
-            // Places API mode: 'auto' tries new API first, then falls back to 'legacy'
-            const apiModeRef = useRef('auto');
-
-            const customers = data?.customers || [];
-            const dcs = (data?.distributionCenters || []).filter(dc => dc.lat && dc.lng);
-
-            // Haversine distance in miles
-            const distanceMiles = (lat1, lng1, lat2, lng2) => {
-                const R = 3959;
-                const dLat = (lat2 - lat1) * Math.PI / 180;
-                const dLng = (lng2 - lng1) * Math.PI / 180;
-                const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2;
-                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            };
-
-            // Find nearest DC to a point; returns { name, miles }
-            const nearestDC = (lat, lng) => {
-                let best = null;
-                dcs.forEach(dc => {
-                    const d = distanceMiles(lat, lng, parseFloat(dc.lat), parseFloat(dc.lng));
-                    if (!best || d < best.miles) best = { name: dc.name, miles: d };
-                });
-                return best;
-            };
-
-            // Is this place already a customer? Match by proximity (~60m) to any customer location.
-            const isCustomer = (lat, lng) => {
-                for (const c of customers) {
-                    if (!c.lat || !c.lng) continue;
-                    const d = distanceMiles(lat, lng, parseFloat(c.lat), parseFloat(c.lng));
-                    if (d < 0.037) return true; // ~60 meters
-                }
-                return false;
-            };
-
-            // Refs so the map's idle listener (a long-lived closure) always sees
-            // the latest autoSearch flag and runSearch implementation.
-            const autoSearchRef = useRef(autoSearch);
-            useEffect(() => { autoSearchRef.current = autoSearch; }, [autoSearch]);
-            const runSearchRef = useRef(null);
-
-            // Initialize map once
-            useEffect(() => {
-                if (!mapRef.current || mapInstance.current) return;
-
-                const firstDC = dcs[0];
-                const center = firstDC
-                    ? { lat: parseFloat(firstDC.lat), lng: parseFloat(firstDC.lng) }
-                    : { lat: 39.8283, lng: -98.5795 };
-
-                const map = new google.maps.Map(mapRef.current, {
-                    center,
-                    zoom: firstDC ? 13 : 5,
-                    mapTypeControl: true,
-                    streetViewControl: false,
-                    fullscreenControl: true
-                });
-                mapInstance.current = map;
-                placesServiceRef.current = new google.maps.places.PlacesService(map);
-
-                // Attach idle listener (fires after pan/zoom settles)
-                idleListenerRef.current = map.addListener('idle', () => {
-                    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-                    // Debounce slightly so rapid movements don't each trigger a search
-                    searchTimerRef.current = setTimeout(async () => {
-                        if (!autoSearchRef.current || !runSearchRef.current) return;
-                        // Enforce the per-session auto-search cap
-                        if (autoSearchCountRef.current >= AUTO_SEARCH_CAP) {
-                            setAutoSearch(false);
-                            return;
-                        }
-                        // Only count against the cap if a search actually ran (passed zoom guard)
-                        const didSearch = await runSearchRef.current();
-                        if (didSearch) setAutoSearchCount(c => c + 1);
-                    }, 600);
-                });
-
-                return () => {
-                    if (idleListenerRef.current) google.maps.event.removeListener(idleListenerRef.current);
-                    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-                };
-            }, []);
-
-            // Process one normalized place result (shared by both API paths)
-            const handlePlaceResult = ({ place_id, name, vicinity, lat, lng, types }) => {
-                if (!place_id || seenPlaceIds.current.has(place_id)) return;
-                seenPlaceIds.current.add(place_id);
-
-                const customer = isCustomer(lat, lng);
-                addMarker({ place_id, name, vicinity, lat, lng, isCustomer: customer, types });
-
-                if (customer) {
-                    setMatchedCustomers(prev => prev + 1);
-                } else {
-                    const dc = nearestDC(lat, lng);
-                    setProspects(prev => [...prev, {
-                        place_id, name, vicinity, lat, lng,
-                        nearestDcName: dc?.name || '-',
-                        nearestDcMiles: dc ? dc.miles.toFixed(1) : '-',
-                        phone: null, website: null, enriched: false
-                    }]);
-                }
-            };
-
-            // Search using the NEW Places API (Place.searchNearby). Returns true on success.
-            const searchWithNewAPI = async (map) => {
-                if (!(google.maps.places.Place && google.maps.places.Place.searchNearby)) return false;
-
-                const bounds = map.getBounds();
-                const center = map.getCenter();
-                if (!bounds || !center) return false;
-
-                // New API uses a circular locationRestriction (radius <= 50000m).
-                const ne = bounds.getNorthEast();
-                const sw = bounds.getSouthWest();
-                let radius = 5000;
-                if (google.maps.geometry?.spherical) {
-                    const diameter = google.maps.geometry.spherical.computeDistanceBetween(ne, sw);
-                    radius = Math.min(Math.max(diameter / 2, 100), 50000);
-                }
-
-                const request = {
-                    fields: ['id', 'displayName', 'location', 'formattedAddress', 'types'],
-                    locationRestriction: { center: { lat: center.lat(), lng: center.lng() }, radius },
-                    includedPrimaryTypes: ['gas_station', 'convenience_store'],
-                    maxResultCount: 20
-                };
-
-                const { places } = await google.maps.places.Place.searchNearby(request);
-                (places || []).forEach(place => {
-                    if (!place.location) return;
-                    handlePlaceResult({
-                        place_id: place.id,
-                        name: (place.displayName && place.displayName.text) || place.displayName || 'Unknown',
-                        vicinity: place.formattedAddress || '',
-                        lat: place.location.lat(),
-                        lng: place.location.lng(),
-                        types: place.types || []
-                    });
-                });
-                return true;
-            };
-
-            // Search using the LEGACY PlacesService.nearbySearch. Returns a Promise.
-            const searchWithLegacyAPI = (map) => new Promise((resolve) => {
-                const svc = placesServiceRef.current;
-                if (!svc) return resolve(false);
-                const bounds = map.getBounds();
-                if (!bounds) return resolve(false);
-
-                const types = ['gas_station', 'convenience_store'];
-                let pending = types.length;
-                let anyOk = false;
-
-                types.forEach(type => {
-                    svc.nearbySearch({ bounds, type }, (results, status) => {
-                        if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-                            anyOk = true;
-                            results.forEach(place => {
-                                if (!place.geometry?.location) return;
-                                handlePlaceResult({
-                                    place_id: place.place_id,
-                                    name: place.name || 'Unknown',
-                                    vicinity: place.vicinity || '',
-                                    lat: place.geometry.location.lat(),
-                                    lng: place.geometry.location.lng(),
-                                    types: place.types || []
-                                });
-                            });
-                        }
-                        pending--;
-                        if (pending === 0) resolve(anyOk);
-                    });
-                });
-            });
-
-            // Run a nearby search; tries new API first, falls back to legacy.
-            // Returns true if a search actually executed, false if blocked by the zoom guard.
-            const runSearch = async () => {
-                const map = mapInstance.current;
-                if (!map) return false;
-
-                // Cost guard: require a reasonable zoom so we don't pull huge result sets
-                if (map.getZoom() < 12) {
-                    setZoomWarning(true);
-                    return false;
-                }
-                setZoomWarning(false);
-                setSearching(true);
-
+            const loadReport = async () => {
+                setLoading(true);
                 try {
-                    if (apiModeRef.current === 'auto' || apiModeRef.current === 'new') {
-                        try {
-                            const ok = await searchWithNewAPI(map);
-                            if (ok) {
-                                apiModeRef.current = 'new';
-                                return true;
-                            }
-                            // New API classes not present → use legacy from now on
-                            apiModeRef.current = 'legacy';
-                        } catch (err) {
-                            // New API present but not enabled/authorized → fall back to legacy
-                            console.warn('New Places API unavailable, falling back to legacy:', err?.message || err);
-                            apiModeRef.current = 'legacy';
-                        }
-                    }
-                    await searchWithLegacyAPI(map);
-                    return true;
-                } catch (err) {
-                    console.error('Prospect search failed:', err);
-                    return true; // a search was attempted; count it
-                } finally {
-                    setSearching(false);
-                }
+                    const r = await api.request(`/sales/report?period=${period}`);
+                    setReport(r);
+                } catch (e) { setMsg('Error loading report: ' + e.message); }
+                finally { setLoading(false); }
+            };
+            const loadReps = async () => {
+                try { setReps(await api.request('/sales/reps')); } catch (e) { setMsg('Error: ' + e.message); }
+            };
+            const loadRates = async () => {
+                try { setRates(await api.request('/sales/rates')); } catch (e) { setMsg('Error: ' + e.message); }
+            };
+            const loadHolding = async () => {
+                try { setHolding(await api.request('/sales/holding')); } catch (e) { setMsg('Error: ' + e.message); }
             };
 
-            // Keep the ref pointed at the latest runSearch so the idle closure uses current state
-            runSearchRef.current = runSearch;
+            useEffect(() => { if (tab === 'report') loadReport(); }, [tab, period]);
+            useEffect(() => { if (tab === 'reps') loadReps(); if (tab === 'rates') loadRates(); if (tab === 'holding') loadHolding(); }, [tab]);
 
-            // Add a colored dot marker to the map
-            const addMarker = (p) => {
-                const map = mapInstance.current;
-                const color = p.isCustomer ? '#10B981' : '#EF4444'; // green vs red
-                const marker = new google.maps.Marker({
-                    position: { lat: p.lat, lng: p.lng },
-                    map,
-                    title: p.name,
-                    icon: {
-                        path: google.maps.SymbolPath.CIRCLE,
-                        scale: 7,
-                        fillColor: color,
-                        fillOpacity: 0.9,
-                        strokeColor: '#fff',
-                        strokeWeight: 2
-                    }
-                });
-
-                const dc = p.isCustomer ? null : nearestDC(p.lat, p.lng);
-                const esc = (s) => String(s || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-                const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name)}&query_place_id=${encodeURIComponent(p.place_id)}`;
-                const infoContent = `<div style="color:#333;min-width:200px;font-family:system-ui,sans-serif">
-                    <div style="font-weight:700;margin-bottom:4px">${esc(p.name)}</div>
-                    <div style="font-size:0.8rem;color:#555;margin-bottom:6px">${esc(p.vicinity)}</div>
-                    <div style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:${p.isCustomer ? '#f0fdf4' : '#fef2f2'};color:${color}">
-                        ${p.isCustomer ? '✓ Existing Customer' : '◯ Prospect (not a customer)'}
-                    </div>
-                    ${dc ? `<div style="font-size:0.78rem;color:#666;margin-top:6px">Nearest DC: ${esc(dc.name)} (${dc.miles.toFixed(1)} mi)</div>` : ''}
-                    ${!p.isCustomer ? `<a href="${gmapsUrl}" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;margin-top:8px;background:#6366F1;color:white;text-decoration:none;padding:6px;border-radius:6px;font-size:0.75rem;font-weight:600">🔍 View on Google Maps</a>` : ''}
-                </div>`;
-
-                const infoWindow = new google.maps.InfoWindow({ content: infoContent });
-                marker.addListener('click', () => infoWindow.open(map, marker));
-
-                markersRef.current.push(marker);
+            // ---- Reps management ----
+            const [repForm, setRepForm] = useState(null); // null | {} | {id,...}
+            const saveRep = async () => {
+                try {
+                    if (repForm.id) await api.request(`/sales/reps/${repForm.id}`, { method: 'PUT', body: JSON.stringify(repForm) });
+                    else await api.request('/sales/reps', { method: 'POST', body: JSON.stringify(repForm) });
+                    setRepForm(null); loadReps(); if (onRefresh) onRefresh();
+                } catch (e) { alert('Error saving rep: ' + e.message); }
+            };
+            const deactivateRep = async (rep) => {
+                if (!confirm(`Deactivate ${rep.name}? Their historical sales stay intact.`)) return;
+                try { await api.request(`/sales/reps/${rep.id}`, { method: 'DELETE' }); loadReps(); if (onRefresh) onRefresh(); }
+                catch (e) { alert('Error: ' + e.message); }
             };
 
-            // Fetch Place Details (phone + website) for one place. Returns a promise.
-            // Uses whichever API mode search settled on.
-            const enrichOne = async (placeId) => {
-                // Try new API first if we're in 'new' mode
-                if (apiModeRef.current === 'new' && google.maps.places.Place) {
-                    try {
-                        const place = new google.maps.places.Place({ id: placeId });
-                        await place.fetchFields({ fields: ['nationalPhoneNumber', 'websiteURI', 'formattedAddress'] });
-                        return {
-                            phone: place.nationalPhoneNumber || '',
-                            website: place.websiteURI || '',
-                            address: place.formattedAddress || ''
-                        };
-                    } catch (err) {
-                        console.warn('New API detail fetch failed, trying legacy:', err?.message || err);
-                        // fall through to legacy
-                    }
-                }
-                // Legacy getDetails
-                return new Promise((resolve) => {
-                    const svc = placesServiceRef.current;
-                    if (!svc) return resolve(null);
-                    svc.getDetails({
-                        placeId,
-                        fields: ['formatted_phone_number', 'website', 'formatted_address']
-                    }, (place, status) => {
-                        if (status === google.maps.places.PlacesServiceStatus.OK && place) {
-                            resolve({
-                                phone: place.formatted_phone_number || '',
-                                website: place.website || '',
-                                address: place.formatted_address || ''
-                            });
-                        } else {
-                            resolve(null);
-                        }
-                    });
-                });
+            // ---- Rates ----
+            const saveRates = async () => {
+                try {
+                    await api.request('/sales/rates', { method: 'PUT', body: JSON.stringify({ rates }) });
+                    setMsg('✅ Commission rates saved');
+                    setTimeout(() => setMsg(''), 2500);
+                } catch (e) { alert('Error saving rates: ' + e.message); }
             };
 
-            // Enrich all prospects with phone/website for the report (on demand, sequential to respect rate limits)
-            const buildReport = async () => {
-                setShowReport(true);
-                const toEnrich = prospects.filter(p => !p.enriched);
-                if (toEnrich.length === 0) return;
-
-                setEnriching(true);
-                setEnrichProgress({ done: 0, total: toEnrich.length });
-
-                for (let i = 0; i < toEnrich.length; i++) {
-                    const p = toEnrich[i];
-                    // eslint-disable-next-line no-await-in-loop
-                    const details = await enrichOne(p.place_id);
-                    setProspects(prev => prev.map(x =>
-                        x.place_id === p.place_id
-                            ? { ...x, phone: details?.phone || '', website: details?.website || '', address: details?.address || x.vicinity, enriched: true }
-                            : x
-                    ));
-                    setEnrichProgress({ done: i + 1, total: toEnrich.length });
-                    // Small delay to avoid hammering the Places API
-                    // eslint-disable-next-line no-await-in-loop
-                    await new Promise(r => setTimeout(r, 200));
-                }
-                setEnriching(false);
+            // ---- Holding resolution ----
+            const resolveHolding = async (id, resolution) => {
+                try {
+                    await api.request(`/sales/holding/${id}/resolve`, { method: 'POST', body: JSON.stringify({ resolution }) });
+                    loadHolding();
+                } catch (e) { alert('Error: ' + e.message); }
+            };
+            const scanHolding = async () => {
+                try {
+                    const r = await api.request('/sales/holding/scan', { method: 'POST', body: '{}' });
+                    setMsg(`Moved ${r.moved_to_holding} sale(s) to holding for review`);
+                    setTimeout(() => setMsg(''), 3000);
+                    loadHolding();
+                } catch (e) { alert('Error: ' + e.message); }
+            };
+            const backfill = async () => {
+                if (!confirm('Stamp commission records for all past completed deliveries that don\'t have them yet? Uses each customer\'s current rep and current rates.')) return;
+                try {
+                    const r = await api.request('/sales/backfill', { method: 'POST', body: '{}' });
+                    setMsg(`✅ Stamped ${r.stamped} historical sale(s)`);
+                    setTimeout(() => setMsg(''), 3000);
+                    if (tab === 'report') loadReport();
+                } catch (e) { alert('Error: ' + e.message); }
             };
 
-            // Export report to CSV
-            const exportCSV = () => {
-                const headers = ['Name', 'Address', 'Phone', 'Website', 'Nearest DC', 'Distance (mi)', 'Latitude', 'Longitude'];
-                const rows = prospects.map(p => [
-                    p.name,
-                    p.address || p.vicinity || '',
-                    p.phone || '',
-                    p.website || '',
-                    p.nearestDcName,
-                    p.nearestDcMiles,
-                    p.lat.toFixed(6),
-                    p.lng.toFixed(6)
-                ]);
-                const csv = [headers, ...rows]
-                    .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-                    .join('\n');
-                const blob = new Blob([csv], { type: 'text/csv' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `prospect-report-${new Date().toISOString().split('T')[0]}.csv`;
-                a.click();
-                URL.revokeObjectURL(url);
-            };
-
-            // Clear all found results and markers
-            const clearResults = () => {
-                markersRef.current.forEach(m => m.setMap(null));
-                markersRef.current = [];
-                seenPlaceIds.current = new Set();
-                setProspects([]);
-                setMatchedCustomers(0);
-            };
+            const tabBtn = (id, label) => (
+                <button className={`btn btn-sm ${tab === id ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab(id)}>{label}</button>
+            );
 
             return (
                 <div className="dashboard-container">
                     <div className="page-header">
                         <div>
-                            <h1>🎯 Prospects</h1>
-                            <p className="text-muted">Find gas stations & convenience stores. Green = existing customer, Red = prospect.</p>
+                            <h1>💰 Sales & Commission</h1>
+                            <p className="text-muted">Track sales and commission per rep, by week, month, or year.</p>
                         </div>
                     </div>
+                    {msg && <div style={{padding:'0.6rem 1rem',background:'rgba(99,102,241,0.1)',borderRadius:'8px',marginBottom:'1rem'}}>{msg}</div>}
 
-                    {/* Controls */}
-                    <div className="card" style={{marginBottom:'1rem'}}>
-                        <div className="card-body" style={{display:'flex', flexWrap:'wrap', gap:'1rem', alignItems:'center', justifyContent:'space-between'}}>
-                            <div style={{display:'flex', gap:'1.5rem', alignItems:'center', flexWrap:'wrap'}}>
-                                <label style={{display:'flex', alignItems:'center', gap:'0.5rem', cursor:'pointer'}}>
-                                    <input type="checkbox" checked={autoSearch} onChange={(e) => { setAutoSearch(e.target.checked); if (e.target.checked && autoSearchCount >= AUTO_SEARCH_CAP) setAutoSearchCount(0); }} style={{width:'18px', height:'18px'}} />
-                                    <span style={{fontWeight:'600'}}>Auto-search as map moves</span>
-                                </label>
-                                {autoSearch && (
-                                    <span style={{fontSize:'0.8rem', color: autoSearchCount >= AUTO_SEARCH_CAP - 5 ? 'var(--warning)' : 'var(--text-muted)'}}>
-                                        {AUTO_SEARCH_CAP - autoSearchCount} auto-searches left
-                                    </span>
-                                )}
-                                {!autoSearch && autoSearchCount >= AUTO_SEARCH_CAP && (
-                                    <span style={{fontSize:'0.8rem', color:'var(--warning)'}}>
-                                        Auto-search paused (cap reached). Re-check to reset.
-                                    </span>
-                                )}
-                                {!autoSearch && (
-                                    <button className="btn btn-secondary btn-sm" onClick={runSearch} disabled={searching}>
-                                        🔍 Search this area
+                    <div style={{display:'flex',gap:'0.5rem',marginBottom:'1.5rem',flexWrap:'wrap'}}>
+                        {tabBtn('report', '📊 Report')}
+                        {tabBtn('reps', '👤 Sales Reps')}
+                        {tabBtn('rates', '⚙️ Commission Rates')}
+                        {tabBtn('holding', `📋 Holding${holding.length ? ' (' + holding.length + ')' : ''}`)}
+                    </div>
+
+                    {/* ---- REPORT TAB ---- */}
+                    {tab === 'report' && (
+                        <div>
+                            <div style={{display:'flex',gap:'0.5rem',marginBottom:'1rem',alignItems:'center'}}>
+                                <span className="text-muted" style={{fontSize:'0.85rem'}}>Group by:</span>
+                                {['week','month','year'].map(p => (
+                                    <button key={p} className={`btn btn-sm ${period === p ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setPeriod(p)}>
+                                        {p.charAt(0).toUpperCase() + p.slice(1)}
                                     </button>
-                                )}
-                                {searching && <span style={{color:'var(--text-muted)', fontSize:'0.9rem'}}><span className="spinner" style={{width:'14px',height:'14px',marginRight:'0.4rem'}}></span>Searching...</span>}
+                                ))}
+                                <button className="btn btn-sm btn-secondary" style={{marginLeft:'auto'}} onClick={backfill} title="Stamp historical deliveries">↺ Backfill history</button>
                             </div>
-                            <div style={{display:'flex', gap:'0.5rem'}}>
-                                <button className="btn btn-secondary btn-sm" onClick={clearResults}>Clear</button>
-                                <button className="btn btn-primary btn-sm" onClick={buildReport} disabled={prospects.length === 0}>
-                                    📋 Red Dot Report ({prospects.length})
-                                </button>
-                            </div>
-                        </div>
-                    </div>
 
-                    {/* Stat summary */}
-                    <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap:'1rem', marginBottom:'1rem'}}>
-                        <div className="card"><div className="card-body" style={{textAlign:'center'}}>
-                            <div style={{fontSize:'1.8rem', fontWeight:'700', color:'var(--danger)'}}>{prospects.length}</div>
-                            <div className="text-muted">🔴 Prospects</div>
-                        </div></div>
-                        <div className="card"><div className="card-body" style={{textAlign:'center'}}>
-                            <div style={{fontSize:'1.8rem', fontWeight:'700', color:'var(--success)'}}>{matchedCustomers}</div>
-                            <div className="text-muted">🟢 Existing Customers</div>
-                        </div></div>
-                        <div className="card"><div className="card-body" style={{textAlign:'center'}}>
-                            <div style={{fontSize:'1.8rem', fontWeight:'700', color:'var(--text-primary)'}}>{prospects.length + matchedCustomers}</div>
-                            <div className="text-muted">Total Found</div>
-                        </div></div>
-                    </div>
-
-                    {zoomWarning && (
-                        <div style={{background:'rgba(245,158,11,0.1)', border:'1px solid var(--warning)', padding:'0.75rem 1rem', borderRadius:'8px', marginBottom:'1rem', fontSize:'0.9rem'}}>
-                            ⚠️ Zoom in closer to search for stores. Searching while zoomed far out returns too many results and increases API costs.
-                        </div>
-                    )}
-
-                    {/* Map */}
-                    <div className="card">
-                        <div ref={mapRef} style={{width:'100%', height:'600px', borderRadius:'8px'}}></div>
-                    </div>
-
-                    {/* Report Modal */}
-                    {showReport && (
-                        <div className="modal-overlay" onClick={() => setShowReport(false)}>
-                            <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'900px', width:'95%'}}>
-                                <div className="modal-header">
-                                    <h2>📋 Red Dot Report — {prospects.length} Prospects</h2>
-                                    <button className="close-btn" onClick={() => setShowReport(false)}>×</button>
-                                </div>
-                                <div className="modal-body">
-                                    {enriching && (
-                                        <div style={{background:'var(--bg-dark)', padding:'0.75rem 1rem', borderRadius:'8px', marginBottom:'1rem', fontSize:'0.9rem'}}>
-                                            <span className="spinner" style={{width:'14px',height:'14px',marginRight:'0.5rem'}}></span>
-                                            Gathering contact info... {enrichProgress.done}/{enrichProgress.total}
-                                        </div>
-                                    )}
-                                    <div style={{marginBottom:'1rem', display:'flex', justifyContent:'flex-end'}}>
-                                        <button className="btn btn-success btn-sm" onClick={exportCSV} disabled={enriching}>
-                                            ⬇️ Export to CSV
-                                        </button>
-                                    </div>
-                                    <div style={{maxHeight:'500px', overflowY:'auto'}}>
-                                        <table className="data-table" style={{fontSize:'0.85rem'}}>
+                            {loading ? <div style={{padding:'2rem',textAlign:'center'}}><span className="spinner"></span></div> : report && (
+                                <>
+                                    {/* Per-rep totals */}
+                                    <div className="table-container" style={{marginBottom:'2rem'}}>
+                                        <table className="data-table">
                                             <thead>
-                                                <tr>
-                                                    <th>Name</th>
-                                                    <th>Address</th>
-                                                    <th>Phone</th>
-                                                    <th>Website</th>
-                                                    <th>Nearest DC</th>
-                                                    <th>Dist (mi)</th>
-                                                </tr>
+                                                <tr><th>Sales Rep</th><th>Sales</th><th>Revenue</th><th>Commission</th><th style={{textAlign:'center'}}>In Holding</th></tr>
                                             </thead>
                                             <tbody>
-                                                {prospects.map(p => (
-                                                    <tr key={p.place_id}>
-                                                        <td><strong>{p.name}</strong></td>
-                                                        <td>{p.address || p.vicinity || '-'}</td>
-                                                        <td>{p.enriched ? (p.phone || '—') : '...'}</td>
-                                                        <td>{p.enriched ? (p.website ? <a href={p.website} target="_blank" rel="noopener noreferrer" style={{color:'var(--primary)'}}>Link</a> : '—') : '...'}</td>
-                                                        <td>{p.nearestDcName}</td>
-                                                        <td>{p.nearestDcMiles}</td>
+                                                {(report.totals || []).length === 0 && (
+                                                    <tr><td colSpan="5" style={{textAlign:'center',color:'var(--text-muted)',padding:'2rem'}}>No sales recorded yet for this period.</td></tr>
+                                                )}
+                                                {(report.totals || []).map((t, i) => (
+                                                    <tr key={i}>
+                                                        <td><strong>{t.rep_name}</strong></td>
+                                                        <td>{t.line_count}</td>
+                                                        <td>{money(t.total_revenue)}</td>
+                                                        <td style={{color:'var(--success)',fontWeight:600}}>{money(t.total_commission)}</td>
+                                                        <td style={{textAlign:'center'}}>{parseFloat(t.holding_commission) > 0 ? <span className="badge badge-warning">{money(t.holding_commission)}</span> : '—'}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>
+                                            {(report.totals || []).length > 0 && (
+                                                <tfoot>
+                                                    <tr style={{borderTop:'2px solid var(--border)',fontWeight:700}}>
+                                                        <td>Total</td>
+                                                        <td>{report.totals.reduce((s,t)=>s+parseInt(t.line_count||0),0)}</td>
+                                                        <td>{money(report.totals.reduce((s,t)=>s+parseFloat(t.total_revenue||0),0))}</td>
+                                                        <td style={{color:'var(--success)'}}>{money(report.totals.reduce((s,t)=>s+parseFloat(t.total_commission||0),0))}</td>
+                                                        <td></td>
+                                                    </tr>
+                                                </tfoot>
+                                            )}
                                         </table>
                                     </div>
+
+                                    {/* Time series */}
+                                    {(report.series || []).length > 0 && (
+                                        <div className="table-container">
+                                            <div className="table-header"><div className="table-title">By {period}</div></div>
+                                            <table className="data-table">
+                                                <thead><tr><th>Period</th><th>Sales Rep</th><th>Revenue</th><th>Commission</th></tr></thead>
+                                                <tbody>
+                                                    {report.series.map((s, i) => (
+                                                        <tr key={i}>
+                                                            <td>{s.period_start}</td>
+                                                            <td>{s.rep_name}</td>
+                                                            <td>{money(s.revenue)}</td>
+                                                            <td style={{color:'var(--success)'}}>{money(s.commission)}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ---- REPS TAB ---- */}
+                    {tab === 'reps' && (
+                        <div>
+                            <div style={{marginBottom:'1rem'}}>
+                                <button className="btn btn-primary btn-sm" onClick={() => setRepForm({ name:'', email:'', phone:'', code:'', status:'active' })}>+ Add Sales Rep</button>
+                            </div>
+                            <div className="table-container">
+                                <table className="data-table">
+                                    <thead><tr><th>Name</th><th>Code</th><th>Email</th><th>Phone</th><th>Customers</th><th>Status</th><th></th></tr></thead>
+                                    <tbody>
+                                        {reps.length === 0 && <tr><td colSpan="7" style={{textAlign:'center',color:'var(--text-muted)',padding:'2rem'}}>No sales reps yet. Add your first one.</td></tr>}
+                                        {reps.map(r => (
+                                            <tr key={r.id}>
+                                                <td><strong>{r.name}</strong></td>
+                                                <td>{r.code || '—'}</td>
+                                                <td>{r.email || '—'}</td>
+                                                <td>{r.phone || '—'}</td>
+                                                <td>{r.customer_count || 0}</td>
+                                                <td><span className={`badge ${r.status === 'active' ? 'badge-success' : 'badge-secondary'}`}>{r.status}</span></td>
+                                                <td style={{textAlign:'right',whiteSpace:'nowrap'}}>
+                                                    <button className="btn btn-sm btn-secondary" onClick={() => setRepForm(r)}>Edit</button>
+                                                    {r.status === 'active' && <button className="btn btn-sm btn-secondary" style={{marginLeft:'0.4rem'}} onClick={() => deactivateRep(r)}>Deactivate</button>}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {repForm && (
+                                <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setRepForm(null)}>
+                                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth:'480px'}}>
+                                        <div className="modal-header">
+                                            <h2>{repForm.id ? 'Edit' : 'Add'} Sales Rep</h2>
+                                            <button className="close-btn" onClick={() => setRepForm(null)}>×</button>
+                                        </div>
+                                        <div className="modal-body">
+                                            <div className="form-group"><label className="form-label">Name *</label><input className="form-input" value={repForm.name || ''} onChange={e => setRepForm({...repForm, name:e.target.value})} /></div>
+                                            <div className="form-row" style={{display:'flex',gap:'1rem'}}>
+                                                <div className="form-group" style={{flex:1}}><label className="form-label">Code</label><input className="form-input" value={repForm.code || ''} onChange={e => setRepForm({...repForm, code:e.target.value})} placeholder="REP-01" /></div>
+                                                <div className="form-group" style={{flex:1}}><label className="form-label">Phone</label><input className="form-input" value={repForm.phone || ''} onChange={e => setRepForm({...repForm, phone:e.target.value})} /></div>
+                                            </div>
+                                            <div className="form-group"><label className="form-label">Email</label><input className="form-input" type="email" value={repForm.email || ''} onChange={e => setRepForm({...repForm, email:e.target.value})} /></div>
+                                            {repForm.id && (
+                                                <div className="form-group"><label className="form-label">Status</label>
+                                                    <select className="form-input" value={repForm.status || 'active'} onChange={e => setRepForm({...repForm, status:e.target.value})}>
+                                                        <option value="active">Active</option>
+                                                        <option value="inactive">Inactive</option>
+                                                    </select>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="modal-footer" style={{display:'flex',justifyContent:'flex-end',gap:'0.5rem',padding:'1rem'}}>
+                                            <button className="btn btn-secondary" onClick={() => setRepForm(null)}>Cancel</button>
+                                            <button className="btn btn-primary" onClick={saveRep} disabled={!repForm.name}>Save</button>
+                                        </div>
+                                    </div>
                                 </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ---- RATES TAB ---- */}
+                    {tab === 'rates' && (
+                        <div>
+                            <p className="text-muted" style={{marginBottom:'1rem'}}>Commission is a percentage of sale revenue, set per product unit type — the same rate applies to all reps.</p>
+                            <div className="table-container" style={{maxWidth:'520px'}}>
+                                <table className="data-table">
+                                    <thead><tr><th>Product Unit Type</th><th style={{width:'160px'}}>Commission %</th></tr></thead>
+                                    <tbody>
+                                        {rates.length === 0 && <tr><td colSpan="2" style={{textAlign:'center',color:'var(--text-muted)',padding:'2rem'}}>No rate rows. Run the migration to seed defaults.</td></tr>}
+                                        {rates.map((rt, i) => (
+                                            <tr key={rt.unit_type}>
+                                                <td style={{textTransform:'capitalize'}}>{rt.unit_type}</td>
+                                                <td>
+                                                    <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                                                        <input className="form-input" type="number" step="0.1" min="0" value={rt.rate_percent}
+                                                            onChange={e => { const v = [...rates]; v[i] = {...v[i], rate_percent: e.target.value}; setRates(v); }}
+                                                            style={{width:'90px'}} />
+                                                        <span>%</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div style={{marginTop:'1rem'}}>
+                                <button className="btn btn-primary" onClick={saveRates}>Save Rates</button>
+                            </div>
+                            <p className="text-muted" style={{marginTop:'1rem',fontSize:'0.82rem'}}>Note: rate changes apply to <em>future</em> deliveries. Past sales keep the rate stamped at delivery time.</p>
+                        </div>
+                    )}
+
+                    {/* ---- HOLDING TAB ---- */}
+                    {tab === 'holding' && (
+                        <div>
+                            <div style={{display:'flex',gap:'0.5rem',marginBottom:'1rem',alignItems:'center',flexWrap:'wrap'}}>
+                                <p className="text-muted" style={{margin:0,flex:1,minWidth:'240px'}}>Sales whose stamped rep no longer matches the customer's current rep. Decide what happens to each.</p>
+                                <button className="btn btn-sm btn-secondary" onClick={scanHolding}>🔍 Scan for mismatches</button>
+                            </div>
+                            <div className="table-container">
+                                <table className="data-table">
+                                    <thead><tr><th>Date</th><th>Customer</th><th>Product</th><th>Revenue</th><th>Commission</th><th>Stamped Rep</th><th>Current Rep</th><th>Action</th></tr></thead>
+                                    <tbody>
+                                        {holding.length === 0 && <tr><td colSpan="8" style={{textAlign:'center',color:'var(--text-muted)',padding:'2rem'}}>Nothing in holding. Use "Scan for mismatches" after reassigning customers.</td></tr>}
+                                        {holding.map(h => (
+                                            <tr key={h.id}>
+                                                <td>{h.sale_date}</td>
+                                                <td>{h.customer_name}</td>
+                                                <td>{h.product_name || h.unit_type}</td>
+                                                <td>{money(h.revenue)}</td>
+                                                <td>{money(h.commission_amount)}</td>
+                                                <td>{h.original_rep_name || '—'}</td>
+                                                <td>{h.current_rep_name || '—'}</td>
+                                                <td style={{whiteSpace:'nowrap'}}>
+                                                    <select className="form-input" style={{width:'auto',display:'inline-block',fontSize:'0.8rem',padding:'0.3rem'}} defaultValue=""
+                                                        onChange={e => { if (e.target.value) { resolveHolding(h.id, e.target.value); e.target.value=''; } }}>
+                                                        <option value="" disabled>Decide…</option>
+                                                        <option value="keep_original">Keep with {h.original_rep_name || 'original'}</option>
+                                                        <option value="reassign_current">Give to {h.current_rep_name || 'current'}</option>
+                                                        <option value="void">Void commission</option>
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     )}
@@ -10691,7 +11119,7 @@
         // =====================================================
         // IMPORT VIEW - Customer & History Data Import
         // =====================================================
-        function ImportView({ data, onRefresh }) {
+        function ImportView({ data, onRefresh, embedded }) {
             const [importType, setImportType] = useState('customers');
             const [importing, setImporting] = useState(false);
             const [validating, setValidating] = useState(false);
@@ -10834,25 +11262,42 @@
             
             // Download template as CSV
             const downloadTemplate = () => {
-                if (!template?.sampleCSV) return;
-                
-                const blob = new Blob([template.sampleCSV], { type: 'text/csv' });
+                // Build the CSV client-side so the button always works, even if the
+                // backend template endpoint is unavailable.
+                const templates = {
+                    customers: 'code,name,contact_name,email,phone,address,city,state,zip,customer_type,tank_size,current_level,price_per_gallon,payment_terms,delivery_instructions,auto_delivery,minimum_level,dc_code\n' +
+                        'CUST001,Smith Residence,John Smith,john.smith@email.com,555-123-4567,123 Main Street,Springfield,IL,62701,residential,500,50,2.50,net30,Gate code 1234,true,20,\n' +
+                        'CUST002,ABC Manufacturing,Jane Doe,jane@abcmfg.com,555-234-5678,456 Industrial Blvd,Springfield,IL,62702,commercial,1000,35,2.25,net30,Loading dock behind building,true,25,\n' +
+                        'CUST003,Green Valley Farm,Bob Johnson,bob@greenvalley.com,555-345-6789,789 County Road 5,Chatham,IL,62629,commercial,2000,45,2.15,net45,Call before delivery,false,30,',
+                    delivery_history: 'customer_code,delivery_date,gallons_delivered,tank_level_before,tank_level_after,price_per_gallon,revenue,notes\n' +
+                        'CUST001,2024-01-15,150.5,20,85,2.50,376.25,Regular fill-up\n' +
+                        'CUST001,2024-02-22,175.0,15,90,2.50,437.50,Cold snap increased usage\n' +
+                        'CUST002,2024-01-10,400.0,25,75,2.25,900.00,Monthly delivery'
+                };
+                // Prefer the server-provided sample if it loaded; otherwise use the built-in one.
+                const csvText = template?.sampleCSV || templates[importType] || templates.customers;
+
+                const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = `${importType}-template.csv`;
+                document.body.appendChild(a); // needed for Firefox
                 a.click();
-                URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
             };
             
             return (
                 <div className="dashboard-container">
+                    {!embedded && (
                     <div className="page-header">
                         <div>
                             <h1>📤 Import Data</h1>
                             <p className="text-muted">Import customers and delivery history from spreadsheets</p>
                         </div>
                     </div>
+                    )}
                     
                     {/* Import Type Selection */}
                     <div className="card" style={{marginBottom:'1rem'}}>
@@ -11078,8 +11523,8 @@
         // =====================================================
         // REPORTS VIEW - Analytics & Performance Reports
         // =====================================================
-        function ReportsView({ data }) {
-            const [activeReport, setActiveReport] = useState('dashboard');
+        function ReportsView({ data, initialTab }) {
+            const [activeReport, setActiveReport] = useState(initialTab || 'dashboard');
             const [reportData, setReportData] = useState(null);
             const [loading, setLoading] = useState(true);
             const [dateRange, setDateRange] = useState({
@@ -11096,10 +11541,13 @@
                 { id: 'customers', icon: '👥', label: 'Customer Report', desc: 'Delivery history and account balances' },
                 { id: 'products', icon: '📦', label: 'Product Sales', desc: 'Product revenue and inventory' },
                 { id: 'financial', icon: '💰', label: 'Financial Report', desc: 'Revenue, costs, and profitability' },
-                { id: 'daily', icon: '📅', label: 'Daily Summary', desc: 'Day-by-day breakdown' }
+                { id: 'daily', icon: '📅', label: 'Daily Summary', desc: 'Day-by-day breakdown' },
+                { id: 'predictions', icon: '🔮', label: 'Demand Predictions', desc: 'Forecasted refills and demand' }
             ];
 
             useEffect(() => {
+                // Predictions is a self-contained view; it doesn't use the /reports API.
+                if (activeReport === 'predictions') { setLoading(false); return; }
                 loadReport();
             }, [activeReport, dateRange]);
 
@@ -12124,8 +12572,8 @@
                 <>
                     <div className="page-header">
                         <div>
-                            <h1>📈 Reports & Analytics</h1>
-                            <p className="text-muted">Performance insights and operational metrics</p>
+                            <h1>📈 Analytics</h1>
+                            <p className="text-muted">Reports, forecasting, and operational metrics</p>
                         </div>
                         <div style={{display:'flex',gap:'0.5rem',alignItems:'center'}}>
                             <button className="btn btn-secondary btn-sm" onClick={exportCSV} disabled={!reportData}>
@@ -12176,7 +12624,9 @@
                     </div>
 
                     {/* Report Content */}
-                    {loading ? (
+                    {activeReport === 'predictions' ? (
+                        <PredictionsView data={data} embedded={true} />
+                    ) : loading ? (
                         <div className="loading"><div className="spinner"></div><div style={{marginTop:'1rem'}}>Loading report...</div></div>
                     ) : (
                         <>
@@ -14220,7 +14670,74 @@
             return <MainDashboard user={user} company={company} onLogout={handleLogout} />;
         }
 
-        ReactDOM.render(<App />, document.getElementById('root'));
+        // =====================================================
+        // BOOTSTRAP — fetch the platform key, then render.
+        // Google Maps itself is NOT loaded here. It's loaded on demand AFTER
+        // login, only when the logged-in company has maps enabled. This keeps
+        // the integration global (one key) while activation is per-company.
+        // =====================================================
+
+        function renderApp() {
+            ReactDOM.render(<App />, document.getElementById('root'));
+        }
+
+        // Idempotent Google Maps loader. Returns a promise that resolves when
+        // google.maps is ready, or rejects if no key / load fails.
+        let _gmapsPromise = null;
+        window.loadGoogleMaps = function () {
+            if (window.google && window.google.maps && !window.__GOOGLE_MAPS_STUB__) {
+                return Promise.resolve();
+            }
+            if (_gmapsPromise) return _gmapsPromise;
+            _gmapsPromise = new Promise(function (resolve, reject) {
+                const key = window.__GMAPS_KEY__;
+                if (!key) { reject(new Error('no_key')); return; }
+                const script = document.createElement('script');
+                script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places,geometry`;
+                script.async = true;
+                script.defer = true;
+                script.onload = function () {
+                    window.__GOOGLE_MAPS_STUB__ = false;
+                    window.__GOOGLE_MAPS_READY__ = true;
+                    resolve();
+                };
+                script.onerror = function () {
+                    console.error('Google Maps failed to load — check the API key and that required APIs are enabled.');
+                    reject(new Error('load_failed'));
+                };
+                document.head.appendChild(script);
+            });
+            return _gmapsPromise;
+        };
+
+        async function bootstrap() {
+            let key = '';
+            try {
+                const resp = await fetch('/.netlify/functions/settings/google_maps_api_key');
+                if (resp.ok) {
+                    let val = await resp.json();
+                    // Unwrap possible double-encoding from the settings store.
+                    for (let i = 0; i < 3 && typeof val === 'string' && val.length > 1 && val[0] === '"'; i++) {
+                        try { val = JSON.parse(val); } catch (e) { break; }
+                    }
+                    if (val && typeof val === 'object' && typeof val.value === 'string') val = val.value;
+                    key = (typeof val === 'string') ? val.trim() : '';
+                }
+            } catch (e) {
+                console.warn('Could not fetch Google Maps key from settings:', e);
+            }
+
+            if (key && key.startsWith('AIza')) {
+                window.__GMAPS_KEY__ = key; // available; loaded later per-company
+            } else {
+                window.__GMAPS_KEY__ = '';
+                if (key) console.error('Stored Google Maps key does not look valid (should start with "AIza").');
+            }
+
+            renderApp();
+        }
+
+        bootstrap();
     </script>
 </body>
 </html>

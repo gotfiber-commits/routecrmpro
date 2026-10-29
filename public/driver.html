@@ -1061,7 +1061,13 @@
             
             const navigateToCustomer = () => {
                 const address = `${stop.address}, ${stop.city}, ${stop.state} ${stop.zip}`;
-                const url = `https://maps.apple.com/?daddr=${encodeURIComponent(address)}`;
+                const q = encodeURIComponent(address);
+                const ua = navigator.userAgent || '';
+                const isIOS = /iPhone|iPad|iPod/i.test(ua);
+                // Deep-links to the device's native map app — no Google Maps API key needed.
+                const url = isIOS
+                    ? `https://maps.apple.com/?daddr=${q}`
+                    : `https://www.google.com/maps/dir/?api=1&destination=${q}`;
                 window.open(url, '_blank');
             };
             

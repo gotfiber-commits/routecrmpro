@@ -891,6 +891,28 @@
 
         // Companies View
         function CompaniesView({ companies, searchTerm, setSearchTerm, onCreateNew, onViewDetails, onRefresh, token }) {
+            const [togglingId, setTogglingId] = React.useState(null);
+
+            const toggleMaps = async (company) => {
+                setTogglingId(company.id);
+                try {
+                    const res = await fetch(`${API_BASE}/companies/${company.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                        body: JSON.stringify({ google_maps_enabled: !(company.google_maps_enabled === true) })
+                    });
+                    if (res.ok) {
+                        if (onRefresh) onRefresh();
+                    } else {
+                        alert('Failed to update Maps setting');
+                    }
+                } catch (err) {
+                    alert('Error updating Maps setting');
+                } finally {
+                    setTogglingId(null);
+                }
+            };
+
             return (
                 <>
                     <div className="page-header">
@@ -919,6 +941,7 @@
                                     <th>Plan</th>
                                     <th>Users</th>
                                     <th>Customers</th>
+                                    <th>Maps</th>
                                     <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
@@ -946,6 +969,21 @@
                                         </td>
                                         <td>{company.user_count || 0}</td>
                                         <td>{company.customer_count || 0}</td>
+                                        <td>
+                                            <button
+                                                onClick={() => toggleMaps(company)}
+                                                disabled={togglingId === company.id}
+                                                title={company.google_maps_enabled ? 'Maps enabled — click to disable' : 'Maps disabled — click to enable'}
+                                                style={{
+                                                    cursor: 'pointer', border: 'none', borderRadius: '20px',
+                                                    padding: '0.25rem 0.7rem', fontSize: '0.75rem', fontWeight: 600,
+                                                    background: company.google_maps_enabled ? 'rgba(16,185,129,0.15)' : 'rgba(148,163,184,0.15)',
+                                                    color: company.google_maps_enabled ? '#10B981' : '#94A3B8'
+                                                }}
+                                            >
+                                                {togglingId === company.id ? '…' : (company.google_maps_enabled ? '🗺️ On' : 'Off')}
+                                            </button>
+                                        </td>
                                         <td>
                                             <span className={`status-badge status-${company.status}`}>
                                                 {company.status}
@@ -1891,6 +1929,9 @@
             const [loading, setLoading] = useState(true);
             const [saving, setSaving] = useState(false);
             const [message, setMessage] = useState('');
+            // Integration API keys (stored as plain strings in site_settings)
+            const [apiKeys, setApiKeys] = useState({ google_maps_api_key: '' });
+            const [showKey, setShowKey] = useState(false);
 
             useEffect(() => {
                 loadSettings();
@@ -1902,6 +1943,10 @@
                     if (response.ok) {
                         const data = await response.json();
                         setSettings(data);
+                        // Pull plain-string integration keys out of the flat settings map
+                        setApiKeys({
+                            google_maps_api_key: typeof data.google_maps_api_key === 'string' ? data.google_maps_api_key : ''
+                        });
                     }
                 } catch (err) {
                     console.error('Failed to load settings');
@@ -1985,6 +2030,44 @@
                     <div className="page-header">
                         <h1 className="page-title">🎨 Site Settings</h1>
                         {message && <span style={{ color: message.includes('✅') ? 'var(--success)' : 'var(--danger)' }}>{message}</span>}
+                    </div>
+
+                    {/* Integrations / API Keys */}
+                    <div className="card" style={{ marginBottom: '2rem' }}>
+                        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3>🔑 Integrations & API Keys</h3>
+                            <button className="btn btn-primary btn-sm" onClick={() => saveSettings('google_maps_api_key', apiKeys.google_maps_api_key)} disabled={saving}>
+                                {saving ? 'Saving...' : 'Save Keys'}
+                            </button>
+                        </div>
+                        <div className="card-body">
+                            <div className="form-group">
+                                <label className="form-label">Google Maps API Key <span style={{color:'var(--text-muted)',fontWeight:'normal'}}>— platform-wide, used by all tenants for maps, geocoding, routing & prospecting</span></label>
+                                <div style={{display:'flex',gap:'0.5rem'}}>
+                                    <input
+                                        className="form-input"
+                                        type={showKey ? 'text' : 'password'}
+                                        value={apiKeys.google_maps_api_key}
+                                        onChange={(e) => setApiKeys(prev => ({ ...prev, google_maps_api_key: e.target.value }))}
+                                        placeholder="AIzaSy..."
+                                        style={{fontFamily:'monospace'}}
+                                        autoComplete="off"
+                                    />
+                                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowKey(s => !s)}>
+                                        {showKey ? '🙈 Hide' : '👁️ Show'}
+                                    </button>
+                                </div>
+                                <small style={{color:'var(--text-muted)',display:'block',marginTop:'0.5rem',lineHeight:'1.5'}}>
+                                    Set this once for the whole platform. Enable these APIs on the key in Google Cloud Console:
+                                    Maps JavaScript API, Places API, Geocoding API, Directions API. Then restrict the key by
+                                    HTTP referrer (your site domain) so it can't be abused. This key is delivered to the browser
+                                    (that's normal for Google Maps) — referrer restriction is what protects it.
+                                </small>
+                            </div>
+                            <div style={{padding:'0.75rem 1rem',background:'rgba(99,102,241,0.08)',borderRadius:'8px',fontSize:'0.85rem',marginTop:'0.5rem'}}>
+                                ℹ️ <strong>Fleetmatics / Verizon Connect</strong> (truck GPS) keys are configured <em>per company</em> inside each tenant's own admin, since every company has its own GPS account.
+                            </div>
+                        </div>
                     </div>
 
                     {/* Hero Section Settings */}

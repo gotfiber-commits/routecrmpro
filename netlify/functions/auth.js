@@ -1,5 +1,5 @@
 // Tenant Authentication API
-const { query } = require('./utils/db');
+const { query, transaction } = require('./utils/db');
 const { verifyPassword, generateToken, hashPassword, requireAuth } = require('./utils/auth');
 const { resolveTenant } = require('./utils/tenant');
 const { success, error, handleOptions, parseBody } = require('./utils/response');
@@ -17,6 +17,16 @@ exports.handler = async (event, context) => {
         // POST /auth/portal-login - Universal login (finds company by email)
         if (method === 'POST' && path === '/portal-login') {
             return await handlePortalLogin(event);
+        }
+
+        // POST /auth/register - Public self-serve signup (creates company + admin, 30-day trial)
+        if (method === 'POST' && path === '/register') {
+            return await handleRegister(event);
+        }
+
+        // GET /auth/check-subdomain?subdomain=x - Live availability check for the signup form
+        if (method === 'GET' && path === '/check-subdomain') {
+            return await checkSubdomain(event);
         }
 
         // POST /auth/login - Tenant user login (requires tenant context)
@@ -105,7 +115,7 @@ async function handlePortalLogin(event) {
 
     // Find user by email or username across all companies
     const result = await query(
-        `SELECT u.*, c.id as company_id, c.name as company_name, c.subdomain, c.plan, c.status as company_status, c.plan_expires_at
+        `SELECT u.*, c.id as company_id, c.name as company_name, c.subdomain, c.plan, c.status as company_status, c.plan_expires_at, c.google_maps_enabled
         FROM users u
         JOIN companies c ON u.company_id = c.id
         WHERE (LOWER(u.email) = LOWER($1) OR LOWER(u.username) = LOWER($1))
@@ -188,11 +198,181 @@ async function handlePortalLogin(event) {
             id: user.company_id,
             name: user.company_name,
             subdomain: user.subdomain,
-            plan: user.plan
+            plan: user.plan,
+            google_maps_enabled: user.google_maps_enabled === true
         },
         dc: dcInfo,
         redirect: `/app.html?tenant=${user.subdomain}`
     });
+}
+
+// ---------------------------------------------------------------------------
+// SELF-SERVE SIGNUP
+// ---------------------------------------------------------------------------
+
+const RESERVED_SUBDOMAINS = [
+    'www', 'app', 'api', 'admin', 'mail', 'ftp', 'localhost', 'test', 'demo',
+    'staging', 'portal', 'dashboard', 'login', 'signup', 'register', 'support',
+    'help', 'billing', 'status', 'blog', 'docs', 'cdn', 'assets', 'static'
+];
+const SUBDOMAIN_REGEX = /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/;
+
+function normalizeSubdomain(s) {
+    return String(s || '').toLowerCase().trim();
+}
+
+// GET /auth/check-subdomain?subdomain=acme -> { available: bool, reason?: string }
+async function checkSubdomain(event) {
+    const params = event.queryStringParameters || {};
+    const subdomain = normalizeSubdomain(params.subdomain);
+
+    if (!subdomain) return success({ available: false, reason: 'Enter a company ID' });
+    if (subdomain.length < 3) return success({ available: false, reason: 'Must be at least 3 characters' });
+    if (subdomain.length > 63) return success({ available: false, reason: 'Too long (max 63 characters)' });
+    if (!SUBDOMAIN_REGEX.test(subdomain)) {
+        return success({ available: false, reason: 'Use lowercase letters, numbers and hyphens only' });
+    }
+    if (RESERVED_SUBDOMAINS.includes(subdomain)) {
+        return success({ available: false, reason: 'This company ID is reserved' });
+    }
+
+    const existing = await query('SELECT id FROM companies WHERE subdomain = $1', [subdomain]);
+    if (existing.rows.length > 0) {
+        return success({ available: false, reason: 'Already taken' });
+    }
+    return success({ available: true });
+}
+
+// POST /auth/register
+// Body: { companyName, subdomain, adminName, email, password, phone? }
+// Creates a company (30-day trial) + first admin user atomically, then logs them in.
+async function handleRegister(event) {
+    const body = parseBody(event);
+    const companyName = String(body.companyName || '').trim();
+    const subdomain = normalizeSubdomain(body.subdomain);
+    const adminName = String(body.adminName || '').trim();
+    const email = String(body.email || '').trim();
+    const password = String(body.password || '');
+    const phone = body.phone ? String(body.phone).trim() : null;
+
+    // --- Validation ---
+    if (!companyName || !subdomain || !adminName || !email || !password) {
+        return error('All fields are required', 400);
+    }
+    if (companyName.length < 2) return error('Company name is too short', 400);
+
+    if (subdomain.length < 3 || subdomain.length > 63 || !SUBDOMAIN_REGEX.test(subdomain)) {
+        return error('Invalid company ID. Use 3-63 lowercase letters, numbers and hyphens.', 400);
+    }
+    if (RESERVED_SUBDOMAINS.includes(subdomain)) {
+        return error('This company ID is reserved. Please choose another.', 400);
+    }
+
+    // Email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) return error('Please enter a valid email address', 400);
+
+    // Password strength (reasonable minimum)
+    if (password.length < 8) return error('Password must be at least 8 characters', 400);
+
+    // --- Uniqueness checks ---
+    // Subdomain must be globally unique.
+    const subTaken = await query('SELECT id FROM companies WHERE subdomain = $1', [subdomain]);
+    if (subTaken.rows.length > 0) {
+        return error('That company ID is already taken. Please choose another.', 409);
+    }
+
+    // Email must be globally unique: portal-login matches email across ALL companies,
+    // so a duplicate would make login ambiguous. Enforce it here.
+    const emailTaken = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
+    if (emailTaken.rows.length > 0) {
+        return error('An account with that email already exists. Try signing in instead.', 409);
+    }
+
+    const passwordHash = await hashPassword(password);
+
+    // Derive a username from the email local-part (unique within the company anyway).
+    const username = email.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g, '') || 'admin';
+
+    // Trial window: 30 days.
+    const planStarted = new Date();
+    const planExpires = new Date();
+    planExpires.setDate(planExpires.getDate() + 30);
+
+    let created;
+    try {
+        created = await transaction(async (client) => {
+            // Create company (trial)
+            const companyRes = await client.query(
+                `INSERT INTO companies (
+                    name, subdomain, email, phone,
+                    plan, plan_started_at, plan_expires_at,
+                    max_users, max_distribution_centers, max_trucks,
+                    status, settings
+                ) VALUES ($1,$2,$3,$4,'trial',$5,$6,5,1,5,'active','{}')
+                RETURNING *`,
+                [companyName, subdomain, email, phone, planStarted, planExpires]
+            );
+            const company = companyRes.rows[0];
+
+            // Create first admin user
+            const userRes = await client.query(
+                `INSERT INTO users (company_id, username, email, password_hash, name, phone, role, avatar, status)
+                 VALUES ($1,$2,$3,$4,$5,$6,'admin','👤','active')
+                 RETURNING id, username, email, name, role, status`,
+                [company.id, username, email, passwordHash, adminName, phone]
+            );
+            const user = userRes.rows[0];
+
+            return { company, user };
+        });
+    } catch (e) {
+        // Unique-constraint race (two signups at once) or other DB error.
+        console.error('Registration failed:', e.message);
+        if (e.code === '23505') {
+            return error('That company ID or email was just taken. Please try again.', 409);
+        }
+        return error('Could not create your account. Please try again.', 500);
+    }
+
+    // Audit (non-blocking)
+    try {
+        await query(
+            `INSERT INTO audit_log (company_id, user_id, action, entity_type, entity_id, ip_address)
+             VALUES ($1,$2,'signup','company',$1,$3)`,
+            [created.company.id, created.user.id, event.headers['x-forwarded-for'] || 'unknown']
+        );
+    } catch (e) { /* ignore */ }
+
+    // Auto-login: issue a token exactly like login does.
+    const token = generateToken(
+        { id: created.user.id, role: created.user.role, username: created.user.username },
+        created.company.id
+    );
+
+    return success({
+        token,
+        user: {
+            id: created.user.id,
+            username: created.user.username,
+            name: created.user.name,
+            email: created.user.email,
+            role: created.user.role,
+            avatar: '👤',
+            dcId: null,
+            driverId: null
+        },
+        company: {
+            id: created.company.id,
+            name: created.company.name,
+            subdomain: created.company.subdomain,
+            plan: created.company.plan,
+            plan_expires_at: created.company.plan_expires_at,
+            google_maps_enabled: created.company.google_maps_enabled === true
+        },
+        isNewSignup: true,
+        redirect: `/app.html?tenant=${created.company.subdomain}&welcome=1`
+    }, 201);
 }
 
 async function handleLogin(event) {
@@ -287,7 +467,8 @@ async function handleLogin(event) {
             id: company.id,
             name: company.name,
             subdomain: company.subdomain,
-            plan: company.plan
+            plan: company.plan,
+            google_maps_enabled: company.google_maps_enabled === true
         },
         dc: dcInfo
     });
@@ -303,7 +484,7 @@ async function getCurrentUser(event) {
 
     // Get fresh user data
     const userResult = await query(
-        `SELECT u.*, c.name as company_name, c.subdomain, c.plan
+        `SELECT u.*, c.name as company_name, c.subdomain, c.plan, c.google_maps_enabled
         FROM users u
         JOIN companies c ON u.company_id = c.id
         WHERE u.id = $1 AND u.company_id = $2`,
@@ -392,7 +573,8 @@ async function getCurrentUser(event) {
             id: user.company_id,
             name: user.company_name,
             subdomain: user.subdomain,
-            plan: user.plan
+            plan: user.plan,
+            google_maps_enabled: user.google_maps_enabled === true
         },
         dc: dcInfo,
         driver: driverInfo,

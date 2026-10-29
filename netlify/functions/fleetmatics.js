@@ -1,5 +1,5 @@
 // Verizon Connect (Fleetmatics) Integration API
-const { query } = require('./utils/db');
+const { query, setTenant } = require('./utils/db');
 const { requireAuth, requireRole } = require('./utils/auth');
 const { success, error, handleOptions, parseBody } = require('./utils/response');
 
@@ -20,6 +20,7 @@ exports.handler = async (event, context) => {
 
     const user = authResult.user;
     const companyId = user.companyId;
+    setTenant(companyId); // RLS tenant scope
     const path = event.path.replace('/.netlify/functions/fleetmatics', '');
     const method = event.httpMethod;
 
